@@ -2,6 +2,7 @@ pub mod geometry;
 pub mod icon;
 pub mod popup;
 pub mod protocol;
+pub mod comp;
 pub mod compose;
 pub mod device;
 pub mod render;
