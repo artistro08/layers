@@ -37,7 +37,11 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const CLASS: PCWSTR = w!("LayersHudWindow");
 
 /// Logical layout in pixels at 96 dpi.
-const HUD_WIDTH: f32 = 200.0;
+/// Floor for the panel width. The panel is sized to its content, but a
+/// very short label should still read as a HUD rather than a chip.
+const HUD_MIN_WIDTH: f32 = 96.0;
+/// Space between the content and the panel's left and right edges.
+const HUD_PAD_X: f32 = 14.0;
 const HUD_HEIGHT: f32 = 48.0;
 const HUD_CORNER: f32 = 12.0;
 const HUD_ICON: f32 = 20.0;
@@ -49,8 +53,8 @@ use crate::popup::SHADOW_MARGIN;
 /// convention (`TEXT_LEFT - ICON_LEFT - ICON_SIZE`).
 const ICON_TEXT_GAP: f32 = 10.0;
 
-const HOLD_MS: u64 = 900;
-const FADE_MS: u64 = 250;
+const HOLD_MS: u64 = 550;
+const FADE_MS: u64 = 200;
 const TICK_MS: u32 = 16;
 
 const TIMER_ID: usize = 1;
@@ -113,7 +117,7 @@ impl Hud {
             let work = if GetMonitorInfoW(monitor, &mut mi).as_bool() {
                 mi.rcWork
             } else {
-                RECT { left: 0, top: 0, right: HUD_WIDTH as i32, bottom: HUD_HEIGHT as i32 }
+                RECT { left: 0, top: 0, right: HUD_MIN_WIDTH as i32, bottom: HUD_HEIGHT as i32 }
             };
             let mut dx = 96u32;
             let mut dy = 96u32;
@@ -259,10 +263,25 @@ fn measure_width(r: &Renderer, s: &str, format: &windows::Win32::Graphics::Direc
 /// layers glyph plus label centred as a group. Returns premultiplied BGRA
 /// plus its pixel dimensions.
 fn paint(r: &Renderer, label: &str, scale: f32) -> Result<(Vec<u8>, i32, i32)> {
-    let w = ((HUD_WIDTH + SHADOW_MARGIN * 2.0) * scale).round() as i32;
-    let h = ((HUD_HEIGHT + SHADOW_MARGIN * 2.0) * scale).round() as i32;
     let dark = theme::dark_apps();
     let s = scale;
+
+    // Measure before sizing: the panel hugs its content rather than sitting
+    // at a fixed width with the label rattling around inside it.
+    let f = popup::format(
+        r,
+        16.0 * s,
+        DWRITE_FONT_WEIGHT_NORMAL,
+        DWRITE_TEXT_ALIGNMENT_LEADING,
+    )?;
+    let text_w = measure_width(r, label, &f)?;
+    let icon_size = HUD_ICON * s;
+    let gap = ICON_TEXT_GAP * s;
+    let total_w = icon_size + gap + text_w;
+    let panel_w = (total_w + HUD_PAD_X * 2.0 * s).max(HUD_MIN_WIDTH * s);
+
+    let w = (panel_w + SHADOW_MARGIN * 2.0 * s).round() as i32;
+    let h = ((HUD_HEIGHT + SHADOW_MARGIN * 2.0) * s).round() as i32;
 
     let bgra = r.render_bgra(w as u32, h as u32, |rt| unsafe {
         crate::popup::draw_shadow(rt, w as f32, h as f32, s, HUD_CORNER)?;
@@ -283,17 +302,6 @@ fn paint(r: &Renderer, label: &str, scale: f32) -> Result<(Vec<u8>, i32, i32)> {
         rt.DrawRoundedRectangle(&panel, &edge, s, None);
 
         let ink = rt.CreateSolidColorBrush(&popup::text(dark), None)?;
-        let f = popup::format(
-            r,
-            16.0 * s,
-            DWRITE_FONT_WEIGHT_NORMAL,
-            DWRITE_TEXT_ALIGNMENT_LEADING,
-        )?;
-        let text_w = measure_width(r, label, &f)?;
-
-        let icon_size = HUD_ICON * s;
-        let gap = ICON_TEXT_GAP * s;
-        let total_w = icon_size + gap + text_w;
         let center_x = (panel_rect.left + panel_rect.right) / 2.0;
         let center_y = (panel_rect.top + panel_rect.bottom) / 2.0;
         let start_x = center_x - total_w / 2.0;
@@ -436,7 +444,7 @@ mod tests {
 
     fn bitmap_wh(scale: f32) -> (i32, i32) {
         (
-            ((HUD_WIDTH + SHADOW_MARGIN * 2.0) * scale).round() as i32,
+            ((HUD_MIN_WIDTH + SHADOW_MARGIN * 2.0) * scale).round() as i32,
             ((HUD_HEIGHT + SHADOW_MARGIN * 2.0) * scale).round() as i32,
         )
     }
@@ -447,7 +455,7 @@ mod tests {
         let p = place(work(), w, h, 1.0);
         let margin = SHADOW_MARGIN as i32;
         let panel_left = p.x + margin;
-        let panel_right = panel_left + HUD_WIDTH as i32;
+        let panel_right = panel_left + HUD_MIN_WIDTH as i32;
         let center = (panel_left + panel_right) / 2;
         assert_eq!(center, (work().right - work().left) / 2);
     }
@@ -478,7 +486,7 @@ mod tests {
         let p = place(work, w, h, 1.0);
         let margin = SHADOW_MARGIN as i32;
         let panel_left = p.x + margin;
-        let panel_right = panel_left + HUD_WIDTH as i32;
+        let panel_right = panel_left + HUD_MIN_WIDTH as i32;
         let center = (panel_left + panel_right) / 2;
         assert_eq!(center, (work.left + work.right) / 2);
     }
