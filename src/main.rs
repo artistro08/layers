@@ -182,7 +182,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         // Explorer restarted: the icon is gone from a fresh taskbar and
         // needs to be re-added, not recreated (the mutex is still held).
         APP.with(|a| {
-            if let Some(app) = a.borrow_mut().as_mut() {
+            // Same reentrancy hazard as refresh(): app.tray.readd() below
+            // blocks in NIM_ADD's cross-process SendMessage, during which
+            // a WM_SETTINGCHANGE broadcast can re-enter this wndproc and
+            // try to borrow APP again.
+            let Ok(mut borrow) = a.try_borrow_mut() else { return };
+            if let Some(app) = borrow.as_mut() {
                 app.tray.readd();
             }
         });
@@ -242,7 +247,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             // An open popup would otherwise show stale colors/DPI through a
             // theme, accent, or DPI change.
             APP.with(|a| {
-                if let Some(app) = a.borrow_mut().as_mut() {
+                // Same reentrancy hazard as refresh(): a nested
+                // WM_SETTINGCHANGE can arrive while an outer call still
+                // holds this borrow. Bail; the popup re-reads theme and
+                // accent on its next paint.
+                let Ok(mut borrow) = a.try_borrow_mut() else { return };
+                if let Some(app) = borrow.as_mut() {
                     if app.popup.is_visible() {
                         let state = app.state;
                         let _ = app.popup.show(&app.renderer, state);
