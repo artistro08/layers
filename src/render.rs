@@ -99,4 +99,55 @@ impl Renderer {
             Ok(Alpha { w: size, h: size, px })
         }
     }
+
+    /// Draws into a WIC bitmap of arbitrary size and returns every channel as
+    /// premultiplied BGRA, rows packed tightly at `w * 4` bytes. The popup is
+    /// colored and not square, so `render_alpha` cannot serve it.
+    pub fn render_bgra(
+        &self,
+        w: u32,
+        h: u32,
+        draw: impl FnOnce(&ID2D1RenderTarget) -> Result<()>,
+    ) -> Result<Vec<u8>> {
+        unsafe {
+            let bitmap = self.wic.CreateBitmap(
+                w,
+                h,
+                &GUID_WICPixelFormat32bppPBGRA,
+                WICBitmapCacheOnLoad,
+            )?;
+
+            let props = D2D1_RENDER_TARGET_PROPERTIES {
+                r#type: D2D1_RENDER_TARGET_TYPE_DEFAULT,
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX: 96.0,
+                dpiY: 96.0,
+                ..Default::default()
+            };
+            let rt = self.d2d.CreateWicBitmapRenderTarget(&bitmap, &props)?;
+
+            rt.BeginDraw();
+            rt.Clear(None);
+            draw(&rt)?;
+            rt.EndDraw(None, None)?;
+
+            let lock = bitmap.Lock(std::ptr::null(), WICBitmapLockRead.0 as u32)?;
+            let stride = lock.GetStride()? as usize;
+            let mut len: u32 = 0;
+            let mut data_ptr: *mut u8 = std::ptr::null_mut();
+            lock.GetDataPointer(&mut len, &mut data_ptr)?;
+            let bytes = std::slice::from_raw_parts(data_ptr, len as usize);
+
+            let row = w as usize * 4;
+            let mut out = vec![0u8; row * h as usize];
+            for y in 0..h as usize {
+                out[y * row..(y + 1) * row]
+                    .copy_from_slice(&bytes[y * stride..y * stride + row]);
+            }
+            Ok(out)
+        }
+    }
 }

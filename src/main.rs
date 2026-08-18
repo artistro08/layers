@@ -1,7 +1,7 @@
 // No console window.
 #![windows_subsystem = "windows"]
 
-use layers::{device, icon, protocol, render, theme, tray};
+use layers::{device, icon, popup, protocol, render, theme, tray};
 use std::cell::{Cell, RefCell};
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
@@ -19,6 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 struct App {
     renderer: render::Renderer,
     tray: tray::Tray,
+    popup: popup::Popup,
     state: device::State,
     device: Option<device::Handle>,
 }
@@ -105,6 +106,7 @@ fn run() -> Result<()> {
             *a.borrow_mut() = Some(App {
                 renderer: render::Renderer::new()?,
                 tray: tray::Tray::new(hwnd)?,
+                popup: popup::Popup::new(hwnd)?,
                 state: device::State {
                     status: device::Status::Disconnected,
                     layers: protocol::Layers(1),
@@ -193,6 +195,34 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
             });
             refresh(hwnd);
+            // An open popup would otherwise show the previous layer.
+            APP.with(|a| {
+                if let Some(app) = a.borrow_mut().as_mut() {
+                    if app.popup.is_visible() {
+                        let state = app.state;
+                        let _ = app.popup.show(&app.renderer, state);
+                    }
+                }
+            });
+            LRESULT(0)
+        }
+        tray::WM_TRAY => {
+            // The shell packs the mouse message into the low word of lParam.
+            let event = (lp.0 as u32) & 0xFFFF;
+            if event == windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONUP
+                || event == windows::Win32::UI::WindowsAndMessaging::WM_RBUTTONUP
+            {
+                APP.with(|a| {
+                    if let Some(app) = a.borrow_mut().as_mut() {
+                        let state = app.state;
+                        let _ = app.popup.show(&app.renderer, state);
+                    }
+                });
+            }
+            LRESULT(0)
+        }
+        popup::QUIT_CLICKED => {
+            let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd) };
             LRESULT(0)
         }
         tray::WM_THEME | WM_DPICHANGED | WM_SETTINGCHANGE => {
