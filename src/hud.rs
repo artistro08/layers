@@ -43,7 +43,7 @@ const HUD_MIN_WIDTH: f32 = 96.0;
 /// Space between the content and the panel's left and right edges.
 const HUD_PAD_X: f32 = 14.0;
 const HUD_HEIGHT: f32 = 48.0;
-const HUD_CORNER: f32 = 12.0;
+const HUD_CORNER: f32 = 9.0;
 const HUD_ICON: f32 = 20.0;
 /// From the work area's bottom edge to the panel's bottom.
 const BOTTOM_GAP: f32 = 80.0;
