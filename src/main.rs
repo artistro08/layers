@@ -1,7 +1,7 @@
 // No console window.
 #![windows_subsystem = "windows"]
 
-use layers::{device, hud, icon, popup, protocol, render, theme, tray};
+use layers::{device, hud, icon, popup, protocol, render, settings, theme, tray};
 use std::cell::{Cell, RefCell};
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
@@ -23,6 +23,7 @@ struct App {
     hud: hud::Hud,
     state: device::State,
     device: Option<device::Handle>,
+    settings: settings::Settings,
 }
 
 thread_local! {
@@ -114,6 +115,7 @@ fn run() -> Result<()> {
                     layers: protocol::Layers(1),
                 },
                 device: Some(handle),
+                settings: settings::Settings::load(),
             });
             Ok(())
         })?;
@@ -201,6 +203,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         tray::WM_DEVICE => {
             let mut fire_hud = false;
             let mut new_layers = protocol::Layers(0);
+            let mut seen_changed = false;
             APP.with(|a| {
                 if let Some(app) = a.borrow_mut().as_mut() {
                     let packed = wp.0;
@@ -214,22 +217,36 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     app.state.layers = layers;
                     app.state.status = status;
 
+                    seen_changed = app.settings.mark_seen(layers);
+
                     // Fires only on an actual layer change while already
                     // connected, not on the Layer-0 state a fresh connect or
-                    // reconnect legitimately starts from.
+                    // reconnect legitimately starts from, and only when the
+                    // user has not turned the HUD off (globally or for this
+                    // layer).
                     fire_hud = layers != prev_layers
                         && status == device::Status::Connected
-                        && prev_status == device::Status::Connected;
+                        && prev_status == device::Status::Connected
+                        && app.settings.hud_allowed(layers);
                     new_layers = layers;
                 }
             });
+            if seen_changed {
+                APP.with(|a| {
+                    if let Some(app) = a.borrow_mut().as_mut() {
+                        app.settings.save();
+                    }
+                });
+            }
             refresh(hwnd);
-            // An open popup would otherwise show the previous layer.
+            // An open popup would otherwise show the previous layer, or miss
+            // a layer that was just newly seen.
             APP.with(|a| {
                 if let Some(app) = a.borrow_mut().as_mut() {
                     if app.popup.is_visible() {
                         let state = app.state;
-                        let _ = app.popup.show(&app.renderer, state);
+                        let settings = app.settings;
+                        let _ = app.popup.show(&app.renderer, state, &settings);
                     }
                 }
             });
@@ -251,12 +268,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 APP.with(|a| {
                     if let Some(app) = a.borrow_mut().as_mut() {
                         let state = app.state;
+                        let settings = app.settings;
                         // popup::show() calls SetForegroundWindow while this
                         // APP.borrow_mut() is still live. Safe only because
                         // this wndproc handles no activation message; a
                         // WM_ACTIVATE/WM_ACTIVATEAPP arm here that called
                         // refresh() would re-enter APP and panic.
-                        let _ = app.popup.show(&app.renderer, state);
+                        let _ = app.popup.show(&app.renderer, state, &settings);
                     }
                 });
             }
@@ -264,6 +282,35 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         popup::QUIT_CLICKED => {
             let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd) };
+            LRESULT(0)
+        }
+        popup::HUD_TOGGLE_CLICKED => {
+            APP.with(|a| {
+                let Ok(mut borrow) = a.try_borrow_mut() else { return };
+                let Some(app) = borrow.as_mut() else { return };
+                app.settings.hud_enabled = !app.settings.hud_enabled;
+                app.settings.save();
+                if app.popup.is_visible() {
+                    let state = app.state;
+                    let settings = app.settings;
+                    let _ = app.popup.show(&app.renderer, state, &settings);
+                }
+            });
+            LRESULT(0)
+        }
+        popup::LAYER_TOGGLE_CLICKED => {
+            let layer = (wp.0 & 0xFF) as u8;
+            APP.with(|a| {
+                let Ok(mut borrow) = a.try_borrow_mut() else { return };
+                let Some(app) = borrow.as_mut() else { return };
+                app.settings.hud_suppressed ^= 1 << layer;
+                app.settings.save();
+                if app.popup.is_visible() {
+                    let state = app.state;
+                    let settings = app.settings;
+                    let _ = app.popup.show(&app.renderer, state, &settings);
+                }
+            });
             LRESULT(0)
         }
         tray::WM_THEME | WM_DPICHANGED | WM_SETTINGCHANGE => {
@@ -279,7 +326,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 if let Some(app) = borrow.as_mut() {
                     if app.popup.is_visible() {
                         let state = app.state;
-                        let _ = app.popup.show(&app.renderer, state);
+                        let settings = app.settings;
+                        let _ = app.popup.show(&app.renderer, state, &settings);
                     }
                 }
             });

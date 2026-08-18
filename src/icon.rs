@@ -14,6 +14,13 @@ pub const POWER_PATH: &str = "M10.75 2.5C10.75 2.08579 10.4142 1.75 10 1.75C9.58
 /// The power glyph is authored on a 20x20 grid.
 pub const POWER_VIEWBOX: f32 = 20.0;
 
+/// `ic_fluent_checkmark_20_filled` from microsoft/fluentui-system-icons, MIT.
+/// See assets/NOTICE-fluentui.txt.
+pub const CHECK_PATH: &str = "M7.03212 13.9072L3.56056 10.0017C3.28538 9.69214 2.81132 9.66425 2.50174 9.93944C2.19215 10.2146 2.16426 10.6887 2.43945 10.9983L6.43945 15.4983C6.72614 15.8208 7.2252 15.8355 7.53034 15.5303L18.0303 5.03033C18.3232 4.73744 18.3232 4.26256 18.0303 3.96967C17.7374 3.67678 17.2626 3.67678 16.9697 3.96967L7.03212 13.9072Z";
+
+/// The checkmark is authored on a 20x20 grid.
+pub const CHECK_VIEWBOX: f32 = 20.0;
+
 use crate::compose::{center_ink, downsample, to_premultiplied_bgra};
 use crate::geometry::Segment;
 use crate::render::Renderer;

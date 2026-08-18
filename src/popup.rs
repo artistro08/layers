@@ -9,6 +9,14 @@ use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 
 /// Posted to the owner window when the Quit row is clicked.
 pub const QUIT_CLICKED: u32 = WM_APP + 4;
+/// Posted to the owner window when the "Show HUD" row is clicked. The
+/// popup has already stayed open; the owner flips `Settings::hud_enabled`,
+/// saves, and re-shows.
+pub const HUD_TOGGLE_CLICKED: u32 = WM_APP + 5;
+/// Posted to the owner window when a per-layer toggle row is clicked.
+/// `wParam` is the layer number. The owner flips that bit of
+/// `Settings::hud_suppressed`, saves, and re-shows.
+pub const LAYER_TOGGLE_CLICKED: u32 = WM_APP + 6;
 
 /// Logical layout in pixels at 96 dpi.
 pub const WIDTH: f32 = 196.0;
@@ -25,39 +33,80 @@ pub const PADDING: f32 = 2.0;
 const HOVER_INSET_X: f32 = 5.0;
 const HOVER_INSET_Y: f32 = 3.0;
 pub const CORNER: f32 = 8.0;
-/// Height of the rule between the Layer and Quit rows: 3px gap, 1px rule,
-/// 3px gap.
+/// Height of the rule between grouped rows: 3px gap, 1px rule, 3px gap.
 pub const SEPARATOR_H: f32 = 7.0;
 /// Transparent bleed around the panel that the drop shadow is drawn into.
 /// The bitmap and window are the panel plus this margin on all sides.
 pub const SHADOW_MARGIN: f32 = 16.0;
-pub const HEIGHT: f32 = PADDING * 2.0 + ROW_HEIGHT * 3.0 + SEPARATOR_H;
 
+/// The popup's contents, in painted/hit-tested order. Built fresh by
+/// [`items`] every time the popup is shown, since the list's shape depends
+/// on live settings (the HUD master switch and which layers have been seen).
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub enum Row {
+pub enum Item {
     Status,
     Layer,
+    Separator,
+    HudToggle,
+    LayerToggle(u8),
     Quit,
 }
 
-/// Which row contains a y coordinate, in bitmap-space client pixels at 96
+/// The popup's contents for the given settings, in order. Layer toggles
+/// appear only while the HUD master switch is on, one per seen layer,
+/// ascending.
+pub fn items(settings: &Settings) -> Vec<Item> {
+    let mut v = vec![Item::Status, Item::Layer, Item::Separator, Item::HudToggle];
+    if settings.hud_enabled {
+        for n in 0..8u8 {
+            if settings.seen_layers & (1 << n) != 0 {
+                v.push(Item::LayerToggle(n));
+            }
+        }
+    }
+    v.push(Item::Separator);
+    v.push(Item::Quit);
+    v
+}
+
+/// The vertical space, in logical pixels, an item occupies.
+fn item_height(item: Item) -> f32 {
+    match item {
+        Item::Separator => SEPARATOR_H,
+        _ => ROW_HEIGHT,
+    }
+}
+
+/// The panel's content height (everything but the top/bottom padding), in
+/// logical pixels, up to but excluding `items[index]`.
+fn item_offset(index: usize, items: &[Item]) -> f32 {
+    items[..index].iter().copied().map(item_height).sum()
+}
+
+/// The full panel height (padding plus every item), in logical pixels.
+/// Replaces what used to be a fixed `HEIGHT` constant now that the item
+/// list is dynamic; `place()` already takes width/height as arguments, so
+/// positioning follows automatically.
+pub fn panel_height(items: &[Item]) -> f32 {
+    PADDING * 2.0 + items.iter().copied().map(item_height).sum::<f32>()
+}
+
+/// Which item contains a y coordinate, in bitmap-space client pixels at 96
 /// dpi (i.e. including the shadow margin, as the window's own client area
-/// does).
-pub fn row_at(y: f32) -> Option<Row> {
+/// does). A separator band, like the padding above the first row and below
+/// the last, resolves to `None`.
+pub fn item_at(y: f32, items: &[Item]) -> Option<(usize, Item)> {
     let y = y - SHADOW_MARGIN;
     if y < PADDING {
         return None;
     }
-    let rel = y - PADDING;
-    if rel < ROW_HEIGHT {
-        return Some(Row::Status);
-    }
-    if rel < ROW_HEIGHT * 2.0 {
-        return Some(Row::Layer);
-    }
-    let quit_start = ROW_HEIGHT * 2.0 + SEPARATOR_H;
-    if rel >= quit_start && rel < quit_start + ROW_HEIGHT {
-        return Some(Row::Quit);
+    let mut rel = y - PADDING;
+    for (i, &item) in items.iter().enumerate() {
+        let h = item_height(item);
+        if rel < h {
+            return if matches!(item, Item::Separator) { None } else { Some((i, item)) };
+        }
+        rel -= h;
     }
     None
 }
@@ -91,106 +140,157 @@ mod tests {
         RECT { left: 0, top: 0, right: 1920, bottom: 1040 }
     }
 
+    fn settings(hud_enabled: bool, seen_layers: u8) -> Settings {
+        Settings { hud_enabled, hud_suppressed: 0, seen_layers }
+    }
+
     // Bitmap dimensions at scale 1.0: panel plus shadow margin on all sides.
-    fn bitmap_wh() -> (i32, i32) {
-        (
-            (WIDTH + SHADOW_MARGIN * 2.0) as i32,
-            (HEIGHT + SHADOW_MARGIN * 2.0) as i32,
-        )
+    fn bitmap_wh(h: f32) -> (i32, i32) {
+        ((WIDTH + SHADOW_MARGIN * 2.0) as i32, (h + SHADOW_MARGIN * 2.0) as i32)
     }
 
     #[test]
-    fn hit_testing_maps_each_row_band() {
-        assert_eq!(row_at(SHADOW_MARGIN + PADDING + 1.0), Some(Row::Status));
+    fn hit_testing_maps_the_fixed_rows_when_the_hud_is_off() {
+        let list = items(&settings(false, 0b1));
+        // Status, Layer, Separator, HudToggle, Separator, Quit.
+        assert_eq!(item_at(SHADOW_MARGIN + PADDING + 1.0, &list), Some((0, Item::Status)));
         assert_eq!(
-            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT + 1.0),
-            Some(Row::Layer)
+            item_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT + 1.0, &list),
+            Some((1, Item::Layer))
         );
         assert_eq!(
-            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H + 1.0),
-            Some(Row::Quit)
+            item_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + 1.0, &list),
+            None,
+            "separator band"
+        );
+        assert_eq!(
+            item_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H + 1.0, &list),
+            Some((3, Item::HudToggle))
         );
     }
 
     #[test]
     fn hit_testing_rejects_the_shadow_margin_above_the_panel() {
-        assert_eq!(row_at(SHADOW_MARGIN - 1.0), None);
+        let list = items(&settings(true, 0));
+        assert_eq!(item_at(SHADOW_MARGIN - 1.0, &list), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_above_the_first_row() {
-        assert_eq!(row_at(SHADOW_MARGIN + PADDING - 1.0), None);
-    }
-
-    #[test]
-    fn hit_testing_rejects_the_separator_gap_between_layer_and_quit() {
-        let gap_mid = SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H / 2.0;
-        assert_eq!(row_at(gap_mid), None);
+        let list = items(&settings(true, 0));
+        assert_eq!(item_at(SHADOW_MARGIN + PADDING - 1.0, &list), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_below_the_last_row() {
-        assert_eq!(
-            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 3.0 + SEPARATOR_H + 1.0),
-            None
-        );
+        let list = items(&settings(false, 0));
+        let bottom = SHADOW_MARGIN + panel_height(&list);
+        assert_eq!(item_at(bottom + 1.0, &list), None);
+    }
+
+    #[test]
+    fn layer_toggles_appear_only_while_the_hud_master_switch_is_on() {
+        assert_eq!(items(&settings(false, 0b101)), vec![
+            Item::Status,
+            Item::Layer,
+            Item::Separator,
+            Item::HudToggle,
+            Item::Separator,
+            Item::Quit,
+        ]);
+    }
+
+    #[test]
+    fn layer_toggles_are_one_per_seen_layer_ascending() {
+        let list = items(&settings(true, 0b0000_0101));
+        assert_eq!(list, vec![
+            Item::Status,
+            Item::Layer,
+            Item::Separator,
+            Item::HudToggle,
+            Item::LayerToggle(0),
+            Item::LayerToggle(2),
+            Item::Separator,
+            Item::Quit,
+        ]);
     }
 
     #[test]
     fn the_popup_opens_above_the_cursor_when_there_is_room() {
-        let (w, h) = bitmap_wh();
-        let p = place(POINT { x: 960, y: 1000 }, work(), w, h, 1.0);
-        // The panel's bottom edge (bitmap y + margin + panel height) must
-        // clear the cursor by the 12px gap.
-        assert!(p.y + SHADOW_MARGIN as i32 + (HEIGHT as i32) <= 1000 - 12);
+        let list = items(&settings(true, 0b1));
+        let h = panel_height(&list);
+        let (w, bh) = bitmap_wh(h);
+        let p = place(POINT { x: 960, y: 1000 }, work(), w, bh, 1.0);
+        assert!(p.y + SHADOW_MARGIN as i32 + (h as i32) <= 1000 - 12);
     }
 
     #[test]
     fn the_popup_drops_below_the_cursor_when_there_is_no_room_above() {
-        let (w, h) = bitmap_wh();
-        let p = place(POINT { x: 960, y: 5 }, work(), w, h, 1.0);
-        // The panel's top edge (bitmap y + margin) must sit below the cursor.
+        let list = items(&settings(true, 0b1));
+        let h = panel_height(&list);
+        let (w, bh) = bitmap_wh(h);
+        let p = place(POINT { x: 960, y: 5 }, work(), w, bh, 1.0);
         assert!(p.y + SHADOW_MARGIN as i32 > 5);
     }
 
     #[test]
     fn the_popup_never_hangs_off_the_right_edge() {
-        let (w, h) = bitmap_wh();
-        let p = place(POINT { x: 1918, y: 1000 }, work(), w, h, 1.0);
-        // Panel right edge (bitmap x + margin + panel width) sits exactly at
-        // the work area's right edge.
+        let list = items(&settings(true, 0b1));
+        let h = panel_height(&list);
+        let (w, bh) = bitmap_wh(h);
+        let p = place(POINT { x: 1918, y: 1000 }, work(), w, bh, 1.0);
         assert_eq!(p.x + SHADOW_MARGIN as i32 + WIDTH as i32, 1920);
     }
 
     #[test]
     fn the_popup_never_hangs_off_the_left_edge() {
-        let (w, h) = bitmap_wh();
-        let p = place(POINT { x: 2, y: 1000 }, work(), w, h, 1.0);
+        let list = items(&settings(true, 0b1));
+        let h = panel_height(&list);
+        let (w, bh) = bitmap_wh(h);
+        let p = place(POINT { x: 2, y: 1000 }, work(), w, bh, 1.0);
         assert_eq!(p.x + SHADOW_MARGIN as i32, 0);
     }
 
     #[test]
     fn the_popup_stays_inside_a_work_area_that_does_not_start_at_the_origin() {
-        let (w, h) = bitmap_wh();
+        let list = items(&settings(true, 0b1));
+        let h = panel_height(&list);
+        let (w, bh) = bitmap_wh(h);
         let work = RECT { left: 1920, top: 0, right: 3840, bottom: 1040 };
-        let p = place(POINT { x: 1921, y: 1000 }, work, w, h, 1.0);
+        let p = place(POINT { x: 1921, y: 1000 }, work, w, bh, 1.0);
         assert_eq!(p.x + SHADOW_MARGIN as i32, 1920);
     }
 
     #[test]
-    fn the_three_rows_plus_padding_and_separator_account_for_the_full_height() {
-        assert_eq!(HEIGHT, PADDING * 2.0 + ROW_HEIGHT * 3.0 + SEPARATOR_H);
+    fn panel_height_is_padding_plus_every_item() {
+        let list = items(&settings(false, 0));
+        // Status, Layer, Separator, HudToggle, Separator, Quit.
+        assert_eq!(panel_height(&list), PADDING * 2.0 + ROW_HEIGHT * 4.0 + SEPARATOR_H * 2.0);
     }
 
-    /// `row_rect` (painted geometry) and `row_at` (hit testing) each encode
-    /// the row order independently. This round trip is the guard against
-    /// them silently disagreeing if `Row` or `frame_index` is reordered.
+    /// `row_rect` (painted geometry) and `item_at` (hit testing) each encode
+    /// the item order independently. This round trip is the guard against
+    /// them silently disagreeing now that the layout is built at runtime
+    /// instead of being three fixed rows.
     #[test]
-    fn row_at_of_row_rect_midpoint_returns_the_same_row() {
-        for row in [Row::Status, Row::Layer, Row::Quit] {
-            let rect = row_rect(row, 1.0);
-            let mid_y = (rect.top + rect.bottom) / 2.0;
-            assert_eq!(row_at(mid_y), Some(row));
+    fn item_at_of_row_rect_midpoint_returns_the_same_item() {
+        let cases = [
+            settings(false, 0b1),
+            settings(true, 0b1),
+            settings(true, 0b0000_0101),
+            settings(true, 0b1111_1111),
+        ];
+        for s in cases {
+            let list = items(&s);
+            for (i, item) in list.iter().enumerate() {
+                let rect = row_rect(i, &list, 1.0);
+                let mid_y = (rect.top + rect.bottom) / 2.0;
+                if matches!(item, Item::Separator) {
+                    assert_eq!(item_at(mid_y, &list), None);
+                } else {
+                    assert_eq!(item_at(mid_y, &list), Some((i, *item)));
+                }
+            }
         }
     }
 }
@@ -268,13 +368,14 @@ pub fn status_detail(status: crate::device::Status) -> Option<&'static str> {
 }
 
 use crate::device;
+use crate::geometry::Segment;
 use crate::icon;
 use crate::render::Renderer;
+use crate::settings::Settings;
 use crate::theme;
 use std::cell::RefCell;
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, SIZE, WPARAM};
-use crate::geometry::Segment;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_BEZIER_SEGMENT, D2D1_FIGURE_BEGIN_FILLED,
     D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_WINDING, D2D_RECT_F,
@@ -326,7 +427,9 @@ const TEXT_LEFT: f32 = 38.0;
 const LAYER_ICON_SIZE: f32 = 19.0;
 /// Right inset of the layer pill.
 const TEXT_RIGHT: f32 = 16.0;
-
+/// How far a per-layer toggle row's icon and text are shifted right of the
+/// "Show HUD" row above it, so it reads as that row's child.
+const TOGGLE_INDENT: f32 = ICON_SIZE;
 
 /// Popup state the window procedure needs. Kept out of `main.rs`'s `APP` so
 /// the popup's messages, which arrive on the same UI thread, can never
@@ -334,13 +437,17 @@ const TEXT_RIGHT: f32 = 16.0;
 struct Inner {
     owner: HWND,
     visible: bool,
-    hovered: Option<Row>,
+    hovered: Option<usize>,
     scale: f32,
     pos: POINT,
     size: (i32, i32),
+    /// The item list backing the currently-painted frames, kept here so the
+    /// window procedure can hit-test and dispatch clicks without touching
+    /// `App`'s settings.
+    items: Vec<Item>,
     /// One pre-rendered frame per hover state, indexed by [`frame_index`], so
     /// a hover repaint needs no renderer inside the window procedure.
-    frames: [Vec<u8>; 4],
+    frames: Vec<Vec<u8>>,
     /// Set when `show()` fell back to `SetCapture` because
     /// `SetForegroundWindow` was denied by the foreground lock, so
     /// `WM_LBUTTONDOWN` knows to dismiss on an outside click.
@@ -351,12 +458,11 @@ thread_local! {
     static POPUP: RefCell<Option<Inner>> = const { RefCell::new(None) };
 }
 
-fn frame_index(hovered: Option<Row>) -> usize {
+/// Index into `Inner::frames`: 0 is unhovered, `i + 1` is `items[i]` hovered.
+fn frame_index(hovered: Option<usize>) -> usize {
     match hovered {
         None => 0,
-        Some(Row::Status) => 1,
-        Some(Row::Layer) => 2,
-        Some(Row::Quit) => 3,
+        Some(i) => i + 1,
     }
 }
 
@@ -380,7 +486,8 @@ impl Popup {
                     scale: 1.0,
                     pos: POINT::default(),
                     size: (0, 0),
-                    frames: Default::default(),
+                    items: Vec::new(),
+                    frames: Vec::new(),
                     captured: false,
                 });
             });
@@ -397,17 +504,25 @@ impl Popup {
         })
     }
 
-    /// Paints every hover frame for `state`, places the window on the monitor
-    /// under the cursor and shows it. Called again while it is already up it
-    /// repaints in place, keeping its position and hovered row, so a layer
-    /// change does not yank the window over to the pointer.
-    pub fn show(&mut self, r: &Renderer, state: device::State) -> Result<()> {
+    /// Paints every hover frame for `state`/`settings`, places the window on
+    /// the monitor under the cursor and shows it. Called again while it is
+    /// already up it repaints in place, keeping its position, so a layer
+    /// change or a toggle click does not yank the window over to the
+    /// pointer or close it.
+    ///
+    /// The item list can change shape while the popup is open (the HUD
+    /// switch flips, a new layer is seen), so the hovered item is recomputed
+    /// from the live cursor position against the fresh list rather than
+    /// carried over by index, which could now point at something else.
+    pub fn show(&mut self, r: &Renderer, state: device::State, settings: &Settings) -> Result<()> {
         unsafe {
             let open = POPUP.with(|p| {
                 let b = p.try_borrow().ok()?;
                 let i = b.as_ref()?;
-                i.visible.then_some((i.pos, i.scale, i.hovered))
+                i.visible.then_some((i.pos, i.scale))
             });
+
+            let list = items(settings);
 
             let mut cursor = POINT::default();
             let _ = GetCursorPos(&mut cursor);
@@ -419,7 +534,7 @@ impl Popup {
             let work = if GetMonitorInfoW(monitor, &mut mi).as_bool() {
                 mi.rcWork
             } else {
-                RECT { left: 0, top: 0, right: WIDTH as i32, bottom: HEIGHT as i32 }
+                RECT { left: 0, top: 0, right: WIDTH as i32, bottom: panel_height(&list) as i32 }
             };
             let mut dx = 96u32;
             let mut dy = 96u32;
@@ -428,28 +543,42 @@ impl Popup {
                     Ok(()) => dx.max(96) as f32 / 96.0,
                     Err(_) => 1.0,
                 };
-            let (scale, hovered) = match open {
-                Some((_, scale, hovered)) => (scale, hovered),
-                None => (cursor_scale, None),
+            let scale = match open {
+                Some((_, scale)) => scale,
+                None => cursor_scale,
             };
 
-            let frames = [
-                paint(r, state, None, scale)?,
-                paint(r, state, Some(Row::Status), scale)?,
-                paint(r, state, Some(Row::Layer), scale)?,
-                paint(r, state, Some(Row::Quit), scale)?,
-            ];
-            let (w, h) = (frames[0].1, frames[0].2);
+            let base = paint(r, state, settings, &list, None, scale)?;
+            let mut frames: Vec<Vec<u8>> = Vec::with_capacity(list.len() + 1);
+            frames.push(base.0.clone());
+            for (idx, item) in list.iter().enumerate() {
+                if matches!(item, Item::Separator) {
+                    // Never hit-tested as hovered; reuse the base frame
+                    // rather than paying for a full redraw.
+                    frames.push(base.0.clone());
+                } else {
+                    frames.push(paint(r, state, settings, &list, Some(idx), scale)?.0);
+                }
+            }
+            let (w, h) = (base.1, base.2);
+
             let pos = match open {
-                Some((pos, _, _)) => pos,
+                Some((pos, _)) => pos,
                 None => place(cursor, work, w, h, scale),
+            };
+            let hovered = if open.is_some() {
+                let client_y = (cursor.y - pos.y) as f32 / scale;
+                item_at(client_y, &list).map(|(idx, _)| idx)
+            } else {
+                None
             };
 
             // The borrow ends before ShowWindow/SetForegroundWindow, which
             // dispatch messages straight back into `wndproc`.
             POPUP.with(|p| {
                 if let Some(i) = p.borrow_mut().as_mut() {
-                    i.frames = frames.map(|f| f.0);
+                    i.items = list;
+                    i.frames = frames;
                     i.scale = scale;
                     i.pos = pos;
                     i.size = (w, h);
@@ -516,6 +645,10 @@ fn register_class(instance: HINSTANCE) {
 fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
     unsafe {
         let scale = GetDpiForWindow(owner).max(96) as f32 / 96.0;
+        // The window is hidden and always resized by the first `show()`
+        // (`UpdateLayeredWindow` resizes it), so this only needs to be a
+        // reasonable starting size, not an exact one.
+        let h = panel_height(&items(&Settings::default()));
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             CLASS,
@@ -524,7 +657,7 @@ fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
             0,
             0,
             ((WIDTH + SHADOW_MARGIN * 2.0) * scale) as i32,
-            ((HEIGHT + SHADOW_MARGIN * 2.0) * scale) as i32,
+            ((h + SHADOW_MARGIN * 2.0) * scale) as i32,
             Some(owner),
             None,
             Some(instance),
@@ -554,16 +687,17 @@ fn dismiss(hwnd: HWND) {
     });
 }
 
-fn row_rect(row: Row, scale: f32) -> D2D_RECT_F {
-    let index = frame_index(Some(row)) as f32 - 1.0;
-    // Quit sits below the separator between it and Layer.
-    let extra = if row == Row::Quit { SEPARATOR_H } else { 0.0 };
-    let top = (SHADOW_MARGIN + PADDING + index * ROW_HEIGHT + extra) * scale;
+/// Positions the item at `index` within `items`, in bitmap-space pixels at
+/// `scale`. Separators contribute `SEPARATOR_H`, every other item
+/// `ROW_HEIGHT`.
+fn row_rect(index: usize, items: &[Item], scale: f32) -> D2D_RECT_F {
+    let top = (SHADOW_MARGIN + PADDING + item_offset(index, items)) * scale;
+    let h = item_height(items[index]);
     D2D_RECT_F {
         left: SHADOW_MARGIN * scale,
         top,
         right: (SHADOW_MARGIN + WIDTH) * scale,
-        bottom: top + ROW_HEIGHT * scale,
+        bottom: top + h * scale,
     }
 }
 
@@ -724,16 +858,51 @@ pub(crate) fn draw_text(
     }
 }
 
+/// Draws an icon+label row for a toggle item. `Item::HudToggle` and
+/// `Item::LayerToggle` share this, differing only in indent, checked state
+/// and label.
+#[allow(clippy::too_many_arguments)]
+fn draw_toggle_row(
+    rt: &ID2D1RenderTarget,
+    r: &Renderer,
+    row: D2D_RECT_F,
+    indent: f32,
+    checked: bool,
+    label: &str,
+    ink: &ID2D1Brush,
+    s: f32,
+) -> Result<()> {
+    let indented = D2D_RECT_F { left: row.left + indent * s, ..row };
+    if checked {
+        draw_icon(rt, icon::CHECK_PATH, icon::CHECK_VIEWBOX, icon_rect(indented, s), ink)?;
+    }
+    let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
+    draw_text(
+        rt,
+        label,
+        &f,
+        D2D_RECT_F {
+            left: indented.left + TEXT_LEFT * s,
+            right: indented.right - TEXT_RIGHT * s,
+            ..indented
+        },
+        ink,
+    );
+    Ok(())
+}
+
 /// Renders one frame of the popup. Returns premultiplied BGRA plus its pixel
 /// dimensions.
 fn paint(
     r: &Renderer,
     state: device::State,
-    hovered: Option<Row>,
+    settings: &Settings,
+    items: &[Item],
+    hovered: Option<usize>,
     scale: f32,
 ) -> Result<(Vec<u8>, i32, i32)> {
     let w = ((WIDTH + SHADOW_MARGIN * 2.0) * scale).round() as i32;
-    let h = ((HEIGHT + SHADOW_MARGIN * 2.0) * scale).round() as i32;
+    let h = ((panel_height(items) + SHADOW_MARGIN * 2.0) * scale).round() as i32;
     let dark = theme::dark_apps();
     let s = scale;
 
@@ -761,9 +930,9 @@ fn paint(
         let edge = rt.CreateSolidColorBrush(&border(dark), None)?;
         rt.DrawRoundedRectangle(&panel, &edge, s, None);
 
-        if let Some(row) = hovered {
+        if let Some(idx) = hovered {
             let rr = D2D1_ROUNDED_RECT {
-                rect: inset_xy(row_rect(row, s), HOVER_INSET_X * s, HOVER_INSET_Y * s),
+                rect: inset_xy(row_rect(idx, items, s), HOVER_INSET_X * s, HOVER_INSET_Y * s),
                 radiusX: 4.0 * s,
                 radiusY: 4.0 * s,
             };
@@ -773,93 +942,158 @@ fn paint(
 
         let ink = rt.CreateSolidColorBrush(&text(dark), None)?;
 
-        // Status row.
-        let row = row_rect(Row::Status, s);
-        let middle = (row.top + row.bottom) / 2.0;
-        let dot = rt.CreateSolidColorBrush(&status_dot(state.status), None)?;
-        rt.FillEllipse(
-            &D2D1_ELLIPSE {
-                point: Vector2 { X: row.left + (ICON_LEFT + ICON_SIZE / 2.0) * s, Y: middle },
-                radiusX: DOT / 2.0 * s,
-                radiusY: DOT / 2.0 * s,
-            },
-            &dot,
-        );
-        let body = D2D_RECT_F { left: row.left + TEXT_LEFT * s, right: row.right - TEXT_RIGHT * s, ..row };
-        match status_detail(state.status) {
-            None => {
-                let f =
-                    format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-                draw_text(rt, status_label(state.status), &f, body, &ink);
-            }
-            Some(detail) => {
-                let f =
-                    format(r, 13.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-                draw_text(
-                    rt,
-                    status_label(state.status),
-                    &f,
-                    D2D_RECT_F { bottom: middle, ..body },
-                    &ink,
-                );
-                let mut faint = text(dark);
-                faint.a *= 0.6;
-                let brush = rt.CreateSolidColorBrush(&faint, None)?;
-                let f =
-                    format(r, 11.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-                draw_text(rt, detail, &f, D2D_RECT_F { top: middle, ..body }, &brush);
+        for (i, item) in items.iter().enumerate() {
+            let row = row_rect(i, items, s);
+            match *item {
+                Item::Status => {
+                    let middle = (row.top + row.bottom) / 2.0;
+                    let dot = rt.CreateSolidColorBrush(&status_dot(state.status), None)?;
+                    rt.FillEllipse(
+                        &D2D1_ELLIPSE {
+                            point: Vector2 {
+                                X: row.left + (ICON_LEFT + ICON_SIZE / 2.0) * s,
+                                Y: middle,
+                            },
+                            radiusX: DOT / 2.0 * s,
+                            radiusY: DOT / 2.0 * s,
+                        },
+                        &dot,
+                    );
+                    let body = D2D_RECT_F {
+                        left: row.left + TEXT_LEFT * s,
+                        right: row.right - TEXT_RIGHT * s,
+                        ..row
+                    };
+                    match status_detail(state.status) {
+                        None => {
+                            let f = format(
+                                r,
+                                14.0 * s,
+                                DWRITE_FONT_WEIGHT_NORMAL,
+                                DWRITE_TEXT_ALIGNMENT_LEADING,
+                            )?;
+                            draw_text(rt, status_label(state.status), &f, body, &ink);
+                        }
+                        Some(detail) => {
+                            let f = format(
+                                r,
+                                13.0 * s,
+                                DWRITE_FONT_WEIGHT_NORMAL,
+                                DWRITE_TEXT_ALIGNMENT_LEADING,
+                            )?;
+                            draw_text(
+                                rt,
+                                status_label(state.status),
+                                &f,
+                                D2D_RECT_F { bottom: middle, ..body },
+                                &ink,
+                            );
+                            let mut faint = text(dark);
+                            faint.a *= 0.6;
+                            let brush = rt.CreateSolidColorBrush(&faint, None)?;
+                            let f = format(
+                                r,
+                                11.0 * s,
+                                DWRITE_FONT_WEIGHT_NORMAL,
+                                DWRITE_TEXT_ALIGNMENT_LEADING,
+                            )?;
+                            draw_text(
+                                rt,
+                                detail,
+                                &f,
+                                D2D_RECT_F { top: middle, ..body },
+                                &brush,
+                            );
+                        }
+                    }
+                }
+                Item::Layer => {
+                    draw_icon(
+                        rt,
+                        icon::GLYPH_PATH,
+                        icon::GLYPH_VIEWBOX,
+                        icon_rect_sized(row, s, LAYER_ICON_SIZE),
+                        &ink,
+                    )?;
+                    let f = format(
+                        r,
+                        14.0 * s,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_TEXT_ALIGNMENT_LEADING,
+                    )?;
+                    draw_text(
+                        rt,
+                        &state.layers.label(),
+                        &f,
+                        D2D_RECT_F {
+                            left: row.left + TEXT_LEFT * s,
+                            right: row.right - TEXT_RIGHT * s,
+                            ..row
+                        },
+                        &ink,
+                    );
+                }
+                Item::Separator => {
+                    let sep_y = (row.top + row.bottom) / 2.0;
+                    let sep_brush = rt.CreateSolidColorBrush(&separator(dark), None)?;
+                    // Inset to the same edges as the hover highlight, so the
+                    // rule lines up with the fill rather than floating wider
+                    // or narrower than it.
+                    rt.DrawLine(
+                        Vector2 { X: row.left + HOVER_INSET_X * s, Y: sep_y },
+                        Vector2 { X: row.right - HOVER_INSET_X * s, Y: sep_y },
+                        &sep_brush,
+                        s,
+                        None,
+                    );
+                }
+                Item::HudToggle => {
+                    draw_toggle_row(
+                        rt,
+                        r,
+                        row,
+                        0.0,
+                        settings.hud_enabled,
+                        "Show HUD",
+                        &ink,
+                        s,
+                    )?;
+                }
+                Item::LayerToggle(n) => {
+                    let checked = settings.hud_suppressed & (1 << n) == 0;
+                    draw_toggle_row(
+                        rt,
+                        r,
+                        row,
+                        TOGGLE_INDENT,
+                        checked,
+                        &format!("Layer {n}"),
+                        &ink,
+                        s,
+                    )?;
+                }
+                Item::Quit => {
+                    draw_icon(rt, icon::POWER_PATH, icon::POWER_VIEWBOX, icon_rect(row, s), &ink)?;
+                    let f = format(
+                        r,
+                        14.0 * s,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_TEXT_ALIGNMENT_LEADING,
+                    )?;
+                    draw_text(
+                        rt,
+                        "Quit",
+                        &f,
+                        D2D_RECT_F {
+                            left: row.left + TEXT_LEFT * s,
+                            right: row.right - TEXT_RIGHT * s,
+                            ..row
+                        },
+                        &ink,
+                    );
+                }
             }
         }
-
-        // Layer row.
-        let row = row_rect(Row::Layer, s);
-        draw_icon(
-            rt,
-            icon::GLYPH_PATH,
-            icon::GLYPH_VIEWBOX,
-            icon_rect_sized(row, s, LAYER_ICON_SIZE),
-            &ink,
-        )?;
-        let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-        draw_text(
-            rt,
-            &state.layers.label(),
-            &f,
-            D2D_RECT_F {
-                left: row.left + TEXT_LEFT * s,
-                right: row.right - TEXT_RIGHT * s,
-                ..row
-            },
-            &ink,
-        );
-        // Separator between the Layer and Quit rows.
-        let sep_y = row.bottom + SEPARATOR_H / 2.0 * s;
-        let sep_brush = rt.CreateSolidColorBrush(&separator(dark), None)?;
-        // Inset to the same edges as the hover highlight, so the rule lines
-        // up with the fill rather than floating wider or narrower than it.
-        rt.DrawLine(
-            Vector2 { X: row.left + HOVER_INSET_X * s, Y: sep_y },
-            Vector2 { X: row.right - HOVER_INSET_X * s, Y: sep_y },
-            &sep_brush,
-            s,
-            None,
-        );
-
-        // Quit row.
-        let row = row_rect(Row::Quit, s);
-        draw_icon(rt, icon::POWER_PATH, icon::POWER_VIEWBOX, icon_rect(row, s), &ink)?;
-        let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
-        draw_text(
-            rt,
-            "Quit",
-            &f,
-            D2D_RECT_F {
-                left: row.left + TEXT_LEFT * s,
-                right: row.right - TEXT_RIGHT * s,
-                ..row
-            },
-            &ink,
-        );
         Ok(())
     })?;
 
@@ -932,11 +1166,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             POPUP.with(|p| {
                 let Ok(mut b) = p.try_borrow_mut() else { return };
                 let Some(i) = b.as_mut() else { return };
-                let row = row_at(y / i.scale);
-                if row != i.hovered {
-                    i.hovered = row;
+                let hit = item_at(y / i.scale, &i.items).map(|(idx, _)| idx);
+                if hit != i.hovered {
+                    i.hovered = hit;
                     let (w, h) = i.size;
-                    let _ = push(hwnd, &i.frames[frame_index(row)], w, h, i.pos);
+                    let _ = push(hwnd, &i.frames[frame_index(hit)], w, h, i.pos);
                 }
             });
             LRESULT(0)
@@ -974,14 +1208,39 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_LBUTTONUP => {
             // The borrow closes before anything that can re-enter here.
-            let quit = POPUP.with(|p| {
+            let clicked = POPUP.with(|p| {
                 let Ok(b) = p.try_borrow() else { return None };
                 let i = b.as_ref()?;
-                (i.hovered == Some(Row::Quit)).then_some(i.owner)
+                let idx = i.hovered?;
+                i.items.get(idx).copied().map(|item| (item, i.owner))
             });
-            if let Some(owner) = quit {
-                let _ = unsafe { PostMessageW(Some(owner), QUIT_CLICKED, WPARAM(0), LPARAM(0)) };
-                dismiss(hwnd);
+            if let Some((item, owner)) = clicked {
+                match item {
+                    Item::Quit => {
+                        let _ = unsafe {
+                            PostMessageW(Some(owner), QUIT_CLICKED, WPARAM(0), LPARAM(0))
+                        };
+                        dismiss(hwnd);
+                    }
+                    Item::HudToggle => {
+                        // Stays open: the owner flips the setting, saves,
+                        // and re-shows with the rebuilt item list.
+                        let _ = unsafe {
+                            PostMessageW(Some(owner), HUD_TOGGLE_CLICKED, WPARAM(0), LPARAM(0))
+                        };
+                    }
+                    Item::LayerToggle(n) => {
+                        let _ = unsafe {
+                            PostMessageW(
+                                Some(owner),
+                                LAYER_TOGGLE_CLICKED,
+                                WPARAM(n as usize),
+                                LPARAM(0),
+                            )
+                        };
+                    }
+                    Item::Status | Item::Layer | Item::Separator => {}
+                }
             }
             LRESULT(0)
         }

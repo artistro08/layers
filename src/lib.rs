@@ -6,5 +6,6 @@ pub mod protocol;
 pub mod compose;
 pub mod device;
 pub mod render;
+pub mod settings;
 pub mod theme;
 pub mod tray;
