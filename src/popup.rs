@@ -13,7 +13,7 @@ pub const QUIT_CLICKED: u32 = WM_APP + 4;
 /// Logical layout in pixels at 96 dpi.
 pub const WIDTH: f32 = 220.0;
 pub const ROW_HEIGHT: f32 = 32.0;
-pub const PADDING: f32 = 4.0;
+pub const PADDING: f32 = 2.0;
 
 /// How far the hover highlight is inset from the panel edges. Deliberately
 /// independent of PADDING so tuning the panel's vertical breathing room does
@@ -22,7 +22,7 @@ pub const PADDING: f32 = 4.0;
 /// Split per axis: Windows insets the highlight noticeably from the panel's
 /// left and right edges, while keeping it tall enough that a row's contents
 /// are not pressed against its top and bottom.
-const HOVER_INSET_X: f32 = 6.0;
+const HOVER_INSET_X: f32 = 5.0;
 const HOVER_INSET_Y: f32 = 3.0;
 pub const CORNER: f32 = 8.0;
 /// Height of the rule between the Layer and Quit rows: 3px gap, 1px rule,
