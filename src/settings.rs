@@ -1,5 +1,4 @@
-//! Persisted user settings: HUD master switch, per-layer suppression, and
-//! which layers have been observed so far.
+//! Persisted user settings: HUD master switch and per-layer suppression.
 //!
 //! Stored under `HKCU\Software\Layers` as `REG_DWORD` values. `theme.rs`
 //! already shows the `RegGetValueW` read pattern; writing needs
@@ -13,23 +12,22 @@ use crate::protocol;
 const KEY: &str = r"Software\Layers";
 const HUD_ENABLED: &str = "HudEnabled";
 const HUD_SUPPRESSED_LAYERS: &str = "HudSuppressedLayers";
-const SEEN_LAYERS: &str = "SeenLayers";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
     pub hud_enabled: bool,
     pub hud_suppressed: u8,
-    pub seen_layers: u8,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { hud_enabled: true, hud_suppressed: 0, seen_layers: 1 }
+        Settings { hud_enabled: true, hud_suppressed: 0 }
     }
 }
 
 impl Settings {
-    /// Missing or unreadable values fall back to the defaults.
+    /// Missing or unreadable values fall back to the defaults. A stale
+    /// `SeenLayers` value left over from a previous build is simply ignored.
     pub fn load() -> Settings {
         let defaults = Settings::default();
         Settings {
@@ -39,9 +37,6 @@ impl Settings {
             hud_suppressed: reg::dword(HUD_SUPPRESSED_LAYERS)
                 .map(|v| v as u8)
                 .unwrap_or(defaults.hud_suppressed),
-            seen_layers: reg::dword(SEEN_LAYERS)
-                .map(|v| v as u8)
-                .unwrap_or(defaults.seen_layers),
         }
     }
 
@@ -49,7 +44,6 @@ impl Settings {
     pub fn save(&self) {
         let _ = reg::set_dword(HUD_ENABLED, self.hud_enabled as u32);
         let _ = reg::set_dword(HUD_SUPPRESSED_LAYERS, self.hud_suppressed as u32);
-        let _ = reg::set_dword(SEEN_LAYERS, self.seen_layers as u32);
     }
 
     /// The layer a HUD would be announcing: the highest active layer, which
@@ -62,17 +56,6 @@ impl Settings {
     pub fn hud_allowed(&self, layers: protocol::Layers) -> bool {
         self.hud_enabled
             && (self.hud_suppressed & (1 << Settings::displayed_layer(layers))) == 0
-    }
-
-    /// Records that a layer has been seen. Returns true if this changed
-    /// anything, so the caller knows whether to save and repaint.
-    pub fn mark_seen(&mut self, layers: protocol::Layers) -> bool {
-        let bit = 1 << Settings::displayed_layer(layers);
-        if self.seen_layers & bit == bit {
-            return false;
-        }
-        self.seen_layers |= bit;
-        true
     }
 }
 
@@ -138,7 +121,7 @@ mod tests {
     use super::*;
 
     fn settings(hud_enabled: bool, hud_suppressed: u8) -> Settings {
-        Settings { hud_enabled, hud_suppressed, seen_layers: 0 }
+        Settings { hud_enabled, hud_suppressed }
     }
 
     #[test]
@@ -180,26 +163,5 @@ mod tests {
     #[test]
     fn displayed_layer_of_multiple_bits_is_the_highest() {
         assert_eq!(Settings::displayed_layer(protocol::Layers(0b1010)), 3);
-    }
-
-    #[test]
-    fn mark_seen_returns_true_the_first_time_a_layer_is_observed() {
-        let mut s = settings(true, 0);
-        assert!(s.mark_seen(protocol::Layers(0b100)));
-        assert_eq!(s.seen_layers, 0b100);
-    }
-
-    #[test]
-    fn mark_seen_returns_false_for_a_layer_already_seen() {
-        let mut s = Settings { hud_enabled: true, hud_suppressed: 0, seen_layers: 0b100 };
-        assert!(!s.mark_seen(protocol::Layers(0b100)));
-        assert_eq!(s.seen_layers, 0b100);
-    }
-
-    #[test]
-    fn mark_seen_accumulates_rather_than_replaces() {
-        let mut s = Settings { hud_enabled: true, hud_suppressed: 0, seen_layers: 0b1 };
-        assert!(s.mark_seen(protocol::Layers(0b100)));
-        assert_eq!(s.seen_layers, 0b101);
     }
 }

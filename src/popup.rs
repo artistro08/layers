@@ -9,14 +9,15 @@ use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 
 /// Posted to the owner window when the Quit row is clicked.
 pub const QUIT_CLICKED: u32 = WM_APP + 4;
-/// Posted to the owner window when the "Show HUD" row is clicked. The
-/// popup has already stayed open; the owner flips `Settings::hud_enabled`,
-/// saves, and re-shows.
-pub const HUD_TOGGLE_CLICKED: u32 = WM_APP + 5;
-/// Posted to the owner window when a per-layer toggle row is clicked.
-/// `wParam` is the layer number. The owner flips that bit of
-/// `Settings::hud_suppressed`, saves, and re-shows.
-pub const LAYER_TOGGLE_CLICKED: u32 = WM_APP + 6;
+/// Posted to the owner window after the pointer has dwelt on the `HudMenu`
+/// row for `SUBMENU_HOVER_MS`. The owner reads the row's screen rect via
+/// [`Popup::hud_menu_row_rect`] and shows the submenu anchored to it.
+pub const HUD_MENU_OPEN: u32 = WM_APP + 7;
+/// Posted to the owner window whenever the submenu should close: the
+/// pointer landed on a different popup row, or the popup itself dismissed
+/// (click-away, focus loss, Escape, Quit). Harmless to post when the
+/// submenu is not open — `Submenu::hide` is idempotent.
+pub const HUD_MENU_CLOSE: u32 = WM_APP + 8;
 
 /// Logical layout in pixels at 96 dpi.
 pub const WIDTH: f32 = 196.0;
@@ -30,8 +31,8 @@ pub const PADDING: f32 = 2.0;
 /// Split per axis: Windows insets the highlight noticeably from the panel's
 /// left and right edges, while keeping it tall enough that a row's contents
 /// are not pressed against its top and bottom.
-const HOVER_INSET_X: f32 = 5.0;
-const HOVER_INSET_Y: f32 = 3.0;
+pub(crate) const HOVER_INSET_X: f32 = 5.0;
+pub(crate) const HOVER_INSET_Y: f32 = 3.0;
 pub const CORNER: f32 = 8.0;
 /// Height of the rule between grouped rows: 3px gap, 1px rule, 3px gap.
 pub const SEPARATOR_H: f32 = 7.0;
@@ -39,34 +40,21 @@ pub const SEPARATOR_H: f32 = 7.0;
 /// The bitmap and window are the panel plus this margin on all sides.
 pub const SHADOW_MARGIN: f32 = 16.0;
 
-/// The popup's contents, in painted/hit-tested order. Built fresh by
-/// [`items`] every time the popup is shown, since the list's shape depends
-/// on live settings (the HUD master switch and which layers have been seen).
+/// The popup's contents, in painted/hit-tested order. Fixed: the HUD's own
+/// master and per-layer toggles live in the hover submenu (`submenu.rs`)
+/// now, so this list no longer depends on live settings.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Item {
     Status,
     Layer,
     Separator,
-    HudToggle,
-    LayerToggle(u8),
+    HudMenu,
     Quit,
 }
 
-/// The popup's contents for the given settings, in order. Layer toggles
-/// appear only while the HUD master switch is on, one per seen layer,
-/// ascending.
-pub fn items(settings: &Settings) -> Vec<Item> {
-    let mut v = vec![Item::Status, Item::Layer, Item::Separator, Item::HudToggle];
-    if settings.hud_enabled {
-        for n in 0..8u8 {
-            if settings.seen_layers & (1 << n) != 0 {
-                v.push(Item::LayerToggle(n));
-            }
-        }
-    }
-    v.push(Item::Separator);
-    v.push(Item::Quit);
-    v
+/// The popup's fixed contents, in order.
+pub fn items() -> Vec<Item> {
+    vec![Item::Status, Item::Layer, Item::Separator, Item::HudMenu, Item::Separator, Item::Quit]
 }
 
 /// The vertical space, in logical pixels, an item occupies.
@@ -140,19 +128,26 @@ mod tests {
         RECT { left: 0, top: 0, right: 1920, bottom: 1040 }
     }
 
-    fn settings(hud_enabled: bool, seen_layers: u8) -> Settings {
-        Settings { hud_enabled, hud_suppressed: 0, seen_layers }
-    }
-
     // Bitmap dimensions at scale 1.0: panel plus shadow margin on all sides.
     fn bitmap_wh(h: f32) -> (i32, i32) {
         ((WIDTH + SHADOW_MARGIN * 2.0) as i32, (h + SHADOW_MARGIN * 2.0) as i32)
     }
 
     #[test]
-    fn hit_testing_maps_the_fixed_rows_when_the_hud_is_off() {
-        let list = items(&settings(false, 0b1));
-        // Status, Layer, Separator, HudToggle, Separator, Quit.
+    fn the_popup_is_a_fixed_six_row_list() {
+        assert_eq!(items(), vec![
+            Item::Status,
+            Item::Layer,
+            Item::Separator,
+            Item::HudMenu,
+            Item::Separator,
+            Item::Quit,
+        ]);
+    }
+
+    #[test]
+    fn hit_testing_maps_the_fixed_rows() {
+        let list = items();
         assert_eq!(item_at(SHADOW_MARGIN + PADDING + 1.0, &list), Some((0, Item::Status)));
         assert_eq!(
             item_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT + 1.0, &list),
@@ -165,59 +160,32 @@ mod tests {
         );
         assert_eq!(
             item_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H + 1.0, &list),
-            Some((3, Item::HudToggle))
+            Some((3, Item::HudMenu))
         );
     }
 
     #[test]
     fn hit_testing_rejects_the_shadow_margin_above_the_panel() {
-        let list = items(&settings(true, 0));
+        let list = items();
         assert_eq!(item_at(SHADOW_MARGIN - 1.0, &list), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_above_the_first_row() {
-        let list = items(&settings(true, 0));
+        let list = items();
         assert_eq!(item_at(SHADOW_MARGIN + PADDING - 1.0, &list), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_below_the_last_row() {
-        let list = items(&settings(false, 0));
+        let list = items();
         let bottom = SHADOW_MARGIN + panel_height(&list);
         assert_eq!(item_at(bottom + 1.0, &list), None);
     }
 
     #[test]
-    fn layer_toggles_appear_only_while_the_hud_master_switch_is_on() {
-        assert_eq!(items(&settings(false, 0b101)), vec![
-            Item::Status,
-            Item::Layer,
-            Item::Separator,
-            Item::HudToggle,
-            Item::Separator,
-            Item::Quit,
-        ]);
-    }
-
-    #[test]
-    fn layer_toggles_are_one_per_seen_layer_ascending() {
-        let list = items(&settings(true, 0b0000_0101));
-        assert_eq!(list, vec![
-            Item::Status,
-            Item::Layer,
-            Item::Separator,
-            Item::HudToggle,
-            Item::LayerToggle(0),
-            Item::LayerToggle(2),
-            Item::Separator,
-            Item::Quit,
-        ]);
-    }
-
-    #[test]
     fn the_popup_opens_above_the_cursor_when_there_is_room() {
-        let list = items(&settings(true, 0b1));
+        let list = items();
         let h = panel_height(&list);
         let (w, bh) = bitmap_wh(h);
         let p = place(POINT { x: 960, y: 1000 }, work(), w, bh, 1.0);
@@ -226,7 +194,7 @@ mod tests {
 
     #[test]
     fn the_popup_drops_below_the_cursor_when_there_is_no_room_above() {
-        let list = items(&settings(true, 0b1));
+        let list = items();
         let h = panel_height(&list);
         let (w, bh) = bitmap_wh(h);
         let p = place(POINT { x: 960, y: 5 }, work(), w, bh, 1.0);
@@ -235,7 +203,7 @@ mod tests {
 
     #[test]
     fn the_popup_never_hangs_off_the_right_edge() {
-        let list = items(&settings(true, 0b1));
+        let list = items();
         let h = panel_height(&list);
         let (w, bh) = bitmap_wh(h);
         let p = place(POINT { x: 1918, y: 1000 }, work(), w, bh, 1.0);
@@ -244,7 +212,7 @@ mod tests {
 
     #[test]
     fn the_popup_never_hangs_off_the_left_edge() {
-        let list = items(&settings(true, 0b1));
+        let list = items();
         let h = panel_height(&list);
         let (w, bh) = bitmap_wh(h);
         let p = place(POINT { x: 2, y: 1000 }, work(), w, bh, 1.0);
@@ -253,7 +221,7 @@ mod tests {
 
     #[test]
     fn the_popup_stays_inside_a_work_area_that_does_not_start_at_the_origin() {
-        let list = items(&settings(true, 0b1));
+        let list = items();
         let h = panel_height(&list);
         let (w, bh) = bitmap_wh(h);
         let work = RECT { left: 1920, top: 0, right: 3840, bottom: 1040 };
@@ -263,33 +231,24 @@ mod tests {
 
     #[test]
     fn panel_height_is_padding_plus_every_item() {
-        let list = items(&settings(false, 0));
-        // Status, Layer, Separator, HudToggle, Separator, Quit.
+        let list = items();
+        // Status, Layer, Separator, HudMenu, Separator, Quit.
         assert_eq!(panel_height(&list), PADDING * 2.0 + ROW_HEIGHT * 4.0 + SEPARATOR_H * 2.0);
     }
 
     /// `row_rect` (painted geometry) and `item_at` (hit testing) each encode
     /// the item order independently. This round trip is the guard against
-    /// them silently disagreeing now that the layout is built at runtime
-    /// instead of being three fixed rows.
+    /// them silently disagreeing.
     #[test]
     fn item_at_of_row_rect_midpoint_returns_the_same_item() {
-        let cases = [
-            settings(false, 0b1),
-            settings(true, 0b1),
-            settings(true, 0b0000_0101),
-            settings(true, 0b1111_1111),
-        ];
-        for s in cases {
-            let list = items(&s);
-            for (i, item) in list.iter().enumerate() {
-                let rect = row_rect(i, &list, 1.0);
-                let mid_y = (rect.top + rect.bottom) / 2.0;
-                if matches!(item, Item::Separator) {
-                    assert_eq!(item_at(mid_y, &list), None);
-                } else {
-                    assert_eq!(item_at(mid_y, &list), Some((i, *item)));
-                }
+        let list = items();
+        for (i, item) in list.iter().enumerate() {
+            let rect = row_rect(i, &list, 1.0);
+            let mid_y = (rect.top + rect.bottom) / 2.0;
+            if matches!(item, Item::Separator) {
+                assert_eq!(item_at(mid_y, &list), None);
+            } else {
+                assert_eq!(item_at(mid_y, &list), Some((i, *item)));
             }
         }
     }
@@ -371,7 +330,6 @@ use crate::device;
 use crate::geometry::Segment;
 use crate::icon;
 use crate::render::Renderer;
-use crate::settings::Settings;
 use crate::theme;
 use std::cell::RefCell;
 use windows::core::{w, Result, PCWSTR};
@@ -401,17 +359,23 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetCursorPos, LoadCursorW, PostMessageW, RegisterClassW,
-    SetForegroundWindow, ShowWindow, UpdateLayeredWindow, IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE,
-    ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-    WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetCursorPos, KillTimer, LoadCursorW, PostMessageW,
+    RegisterClassW, SetForegroundWindow, SetTimer, ShowWindow, UpdateLayeredWindow, IDC_ARROW,
+    SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS,
+    WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows_numerics::Vector2;
 
 const CLASS: PCWSTR = w!("LayersPopupWindow");
 const FONT: PCWSTR = w!("Segoe UI Variable Text");
 const LOCALE: PCWSTR = w!("en-us");
+
+/// Timer ID for the HudMenu row's hover-to-open dwell.
+const SUBMENU_HOVER_TIMER: usize = 1;
+/// How long the pointer must stay on the HudMenu row before the submenu
+/// opens.
+const SUBMENU_HOVER_MS: u32 = 250;
 
 /// Row interior metrics, in logical pixels at 96 dpi.
 const DOT: f32 = 8.0;
@@ -425,11 +389,10 @@ const TEXT_LEFT: f32 = 38.0;
 /// same box size, so it gets a slightly larger one. Icons are centred on the
 /// column rather than left-aligned, so differing sizes stay optically aligned.
 const LAYER_ICON_SIZE: f32 = 19.0;
-/// Right inset of the layer pill.
+/// Right inset of the layer pill, and of the HudMenu row's chevron.
 const TEXT_RIGHT: f32 = 16.0;
-/// How far a per-layer toggle row's icon and text are shifted right of the
-/// "Show HUD" row above it, so it reads as that row's child.
-const TOGGLE_INDENT: f32 = ICON_SIZE;
+/// Side length of the HudMenu row's disclosure chevron.
+const CHEVRON_SIZE: f32 = 12.0;
 
 /// Popup state the window procedure needs. Kept out of `main.rs`'s `APP` so
 /// the popup's messages, which arrive on the same UI thread, can never
@@ -504,17 +467,14 @@ impl Popup {
         })
     }
 
-    /// Paints every hover frame for `state`/`settings`, places the window on
-    /// the monitor under the cursor and shows it. Called again while it is
+    /// Paints every hover frame for `state`, places the window on the
+    /// monitor under the cursor and shows it. Called again while it is
     /// already up it repaints in place, keeping its position, so a layer
-    /// change or a toggle click does not yank the window over to the
-    /// pointer or close it.
+    /// change does not yank the window over to the pointer or close it.
     ///
-    /// The item list can change shape while the popup is open (the HUD
-    /// switch flips, a new layer is seen), so the hovered item is recomputed
-    /// from the live cursor position against the fresh list rather than
-    /// carried over by index, which could now point at something else.
-    pub fn show(&mut self, r: &Renderer, state: device::State, settings: &Settings) -> Result<()> {
+    /// The hovered item is recomputed from the live cursor position against
+    /// the item list rather than carried over by index.
+    pub fn show(&mut self, r: &Renderer, state: device::State) -> Result<()> {
         unsafe {
             let open = POPUP.with(|p| {
                 let b = p.try_borrow().ok()?;
@@ -522,33 +482,17 @@ impl Popup {
                 i.visible.then_some((i.pos, i.scale))
             });
 
-            let list = items(settings);
+            let list = items();
 
             let mut cursor = POINT::default();
             let _ = GetCursorPos(&mut cursor);
-            let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
-            let mut mi = MONITORINFO {
-                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-                ..Default::default()
-            };
-            let work = if GetMonitorInfoW(monitor, &mut mi).as_bool() {
-                mi.rcWork
-            } else {
-                RECT { left: 0, top: 0, right: WIDTH as i32, bottom: panel_height(&list) as i32 }
-            };
-            let mut dx = 96u32;
-            let mut dy = 96u32;
-            let cursor_scale =
-                match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) {
-                    Ok(()) => dx.max(96) as f32 / 96.0,
-                    Err(_) => 1.0,
-                };
+            let (work, cursor_scale) = monitor_work_area(cursor);
             let scale = match open {
                 Some((_, scale)) => scale,
                 None => cursor_scale,
             };
 
-            let base = paint(r, state, settings, &list, None, scale)?;
+            let base = paint(r, state, &list, None, scale)?;
             let mut frames: Vec<Vec<u8>> = Vec::with_capacity(list.len() + 1);
             frames.push(base.0.clone());
             for (idx, item) in list.iter().enumerate() {
@@ -557,7 +501,7 @@ impl Popup {
                     // rather than paying for a full redraw.
                     frames.push(base.0.clone());
                 } else {
-                    frames.push(paint(r, state, settings, &list, Some(idx), scale)?.0);
+                    frames.push(paint(r, state, &list, Some(idx), scale)?.0);
                 }
             }
             let (w, h) = (base.1, base.2);
@@ -622,6 +566,48 @@ impl Popup {
     pub fn hide(&mut self) {
         dismiss(self.hwnd);
     }
+
+    /// The `HudMenu` row's rect in screen coordinates, if the popup is
+    /// currently showing one. `submenu::show` anchors to this.
+    pub fn hud_menu_row_rect(&self) -> Option<RECT> {
+        POPUP.with(|p| {
+            let b = p.try_borrow().ok()?;
+            let i = b.as_ref()?;
+            let idx = i.items.iter().position(|it| *it == Item::HudMenu)?;
+            let r = row_rect(idx, &i.items, i.scale);
+            Some(RECT {
+                left: i.pos.x + r.left.round() as i32,
+                top: i.pos.y + r.top.round() as i32,
+                right: i.pos.x + r.right.round() as i32,
+                bottom: i.pos.y + r.bottom.round() as i32,
+            })
+        })
+    }
+}
+
+/// Work area and effective DPI scale of the monitor under `pt`. Shared by
+/// the popup and its HUD submenu (`submenu::show`) so both clamp into the
+/// same monitor's bounds.
+pub(crate) fn monitor_work_area(pt: POINT) -> (RECT, f32) {
+    unsafe {
+        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let work = if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+            mi.rcWork
+        } else {
+            RECT { left: 0, top: 0, right: 1920, bottom: 1080 }
+        };
+        let mut dx = 96u32;
+        let mut dy = 96u32;
+        let scale = match GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dx, &mut dy) {
+            Ok(()) => dx.max(96) as f32 / 96.0,
+            Err(_) => 1.0,
+        };
+        (work, scale)
+    }
 }
 
 fn register_class(instance: HINSTANCE) {
@@ -648,7 +634,7 @@ fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
         // The window is hidden and always resized by the first `show()`
         // (`UpdateLayeredWindow` resizes it), so this only needs to be a
         // reasonable starting size, not an exact one.
-        let h = panel_height(&items(&Settings::default()));
+        let h = panel_height(&items());
         CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             CLASS,
@@ -668,6 +654,9 @@ fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
 
 /// Hides the window first, then clears the state: `ShowWindow` can dispatch
 /// activation messages back into `wndproc`, which takes the same borrow.
+/// Always tells the owner to close the HUD submenu too — click-away, focus
+/// loss, Escape, and Quit all funnel through here, and `Submenu::hide` is
+/// idempotent so posting when it's already closed is harmless.
 fn dismiss(hwnd: HWND) {
     unsafe {
         let _ = ShowWindow(hwnd, SW_HIDE);
@@ -675,16 +664,19 @@ fn dismiss(hwnd: HWND) {
         // foreground-lock fallback capture from `show()` leaves the mouse
         // captured process-wide.
         let _ = ReleaseCapture();
+        let _ = KillTimer(Some(hwnd), SUBMENU_HOVER_TIMER);
     }
-    POPUP.with(|p| {
-        if let Ok(mut b) = p.try_borrow_mut() {
-            if let Some(i) = b.as_mut() {
-                i.visible = false;
-                i.hovered = None;
-                i.captured = false;
-            }
-        }
+    let owner = POPUP.with(|p| {
+        let Ok(mut b) = p.try_borrow_mut() else { return None };
+        let i = b.as_mut()?;
+        i.visible = false;
+        i.hovered = None;
+        i.captured = false;
+        Some(i.owner)
     });
+    if let Some(owner) = owner {
+        let _ = unsafe { PostMessageW(Some(owner), HUD_MENU_CLOSE, WPARAM(0), LPARAM(0)) };
+    }
 }
 
 /// Positions the item at `index` within `items`, in bitmap-space pixels at
@@ -705,7 +697,7 @@ pub(crate) fn inset(r: D2D_RECT_F, by: f32) -> D2D_RECT_F {
     inset_xy(r, by, by)
 }
 
-fn inset_xy(r: D2D_RECT_F, x: f32, y: f32) -> D2D_RECT_F {
+pub(crate) fn inset_xy(r: D2D_RECT_F, x: f32, y: f32) -> D2D_RECT_F {
     D2D_RECT_F {
         left: r.left + x,
         top: r.top + y,
@@ -858,34 +850,29 @@ pub(crate) fn draw_text(
     }
 }
 
-/// Draws an icon+label row for a toggle item. `Item::HudToggle` and
-/// `Item::LayerToggle` share this, differing only in indent, checked state
-/// and label.
-#[allow(clippy::too_many_arguments)]
-fn draw_toggle_row(
+/// Draws a checkmark+label row for a toggle item: the submenu's "Show HUD"
+/// and per-layer rows. Also used by `popup.rs` for nothing itself any
+/// more — kept here (rather than moved to `submenu.rs`) because it leans on
+/// this module's private `icon_rect`/`TEXT_LEFT`/`TEXT_RIGHT` layout, which
+/// `submenu.rs`'s rows share.
+pub(crate) fn draw_toggle_row(
     rt: &ID2D1RenderTarget,
     r: &Renderer,
     row: D2D_RECT_F,
-    indent: f32,
     checked: bool,
     label: &str,
     ink: &ID2D1Brush,
     s: f32,
 ) -> Result<()> {
-    let indented = D2D_RECT_F { left: row.left + indent * s, ..row };
     if checked {
-        draw_icon(rt, icon::CHECK_PATH, icon::CHECK_VIEWBOX, icon_rect(indented, s), ink)?;
+        draw_icon(rt, icon::CHECK_PATH, icon::CHECK_VIEWBOX, icon_rect(row, s), ink)?;
     }
     let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
     draw_text(
         rt,
         label,
         &f,
-        D2D_RECT_F {
-            left: indented.left + TEXT_LEFT * s,
-            right: indented.right - TEXT_RIGHT * s,
-            ..indented
-        },
+        D2D_RECT_F { left: row.left + TEXT_LEFT * s, right: row.right - TEXT_RIGHT * s, ..row },
         ink,
     );
     Ok(())
@@ -896,7 +883,6 @@ fn draw_toggle_row(
 fn paint(
     r: &Renderer,
     state: device::State,
-    settings: &Settings,
     items: &[Item],
     hovered: Option<usize>,
     scale: f32,
@@ -1047,29 +1033,47 @@ fn paint(
                         None,
                     );
                 }
-                Item::HudToggle => {
-                    draw_toggle_row(
+                Item::HudMenu => {
+                    draw_icon(
                         rt,
-                        r,
-                        row,
-                        0.0,
-                        settings.hud_enabled,
-                        "Show HUD",
+                        icon::GLYPH_PATH,
+                        icon::GLYPH_VIEWBOX,
+                        icon_rect_sized(row, s, LAYER_ICON_SIZE),
                         &ink,
-                        s,
                     )?;
-                }
-                Item::LayerToggle(n) => {
-                    let checked = settings.hud_suppressed & (1 << n) == 0;
-                    draw_toggle_row(
-                        rt,
+                    let f = format(
                         r,
-                        row,
-                        TOGGLE_INDENT,
-                        checked,
-                        &format!("Layer {n}"),
+                        14.0 * s,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_TEXT_ALIGNMENT_LEADING,
+                    )?;
+                    draw_text(
+                        rt,
+                        "HUD",
+                        &f,
+                        D2D_RECT_F {
+                            left: row.left + TEXT_LEFT * s,
+                            right: row.right - TEXT_RIGHT * s,
+                            ..row
+                        },
                         &ink,
-                        s,
+                    );
+                    // Right-aligned at the same inset as every other row's
+                    // text, vertically centred in the row.
+                    let middle = (row.top + row.bottom) / 2.0;
+                    let half = CHEVRON_SIZE / 2.0 * s;
+                    let right = row.right - TEXT_RIGHT * s;
+                    draw_icon(
+                        rt,
+                        icon::CHEVRON_PATH,
+                        icon::CHEVRON_VIEWBOX,
+                        D2D_RECT_F {
+                            left: right - CHEVRON_SIZE * s,
+                            top: middle - half,
+                            right,
+                            bottom: middle + half,
+                        },
+                        &ink,
                     )?;
                 }
                 Item::Quit => {
@@ -1101,7 +1105,9 @@ fn paint(
 }
 
 /// Blits one frame onto the layered window, moving and sizing it to match.
-fn push(hwnd: HWND, bgra: &[u8], w: i32, h: i32, pos: POINT) -> Result<()> {
+/// Shared with `submenu.rs`, which owns a second layered window painted the
+/// same way.
+pub(crate) fn push(hwnd: HWND, bgra: &[u8], w: i32, h: i32, pos: POINT) -> Result<()> {
     unsafe {
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
         let info = BITMAPINFO {
@@ -1168,6 +1174,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let Some(i) = b.as_mut() else { return };
                 let hit = item_at(y / i.scale, &i.items).map(|(idx, _)| idx);
                 if hit != i.hovered {
+                    // Every row change cancels any pending submenu-open
+                    // dwell; landing on the HudMenu row starts a fresh one.
+                    // Landing on a *different* concrete row closes an
+                    // already-open submenu — but landing on nothing (the
+                    // pointer left the popup, which is how it reaches the
+                    // submenu across the small overlap) must not.
+                    let _ = unsafe { KillTimer(Some(hwnd), SUBMENU_HOVER_TIMER) };
+                    let is_hud_menu = hit
+                        .and_then(|idx| i.items.get(idx))
+                        .is_some_and(|it| *it == Item::HudMenu);
+                    if is_hud_menu {
+                        let _ = unsafe {
+                            SetTimer(Some(hwnd), SUBMENU_HOVER_TIMER, SUBMENU_HOVER_MS, None)
+                        };
+                    } else if hit.is_some() {
+                        let _ = unsafe {
+                            PostMessageW(Some(i.owner), HUD_MENU_CLOSE, WPARAM(0), LPARAM(0))
+                        };
+                    }
                     i.hovered = hit;
                     let (w, h) = i.size;
                     let _ = push(hwnd, &i.frames[frame_index(hit)], w, h, i.pos);
@@ -1175,7 +1200,24 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             });
             LRESULT(0)
         }
+        WM_TIMER if wp.0 == SUBMENU_HOVER_TIMER => {
+            let _ = unsafe { KillTimer(Some(hwnd), SUBMENU_HOVER_TIMER) };
+            let owner = POPUP.with(|p| {
+                let Ok(b) = p.try_borrow() else { return None };
+                let i = b.as_ref()?;
+                let idx = i.hovered?;
+                (i.items.get(idx).copied() == Some(Item::HudMenu)).then_some(i.owner)
+            });
+            if let Some(owner) = owner {
+                let _ = unsafe { PostMessageW(Some(owner), HUD_MENU_OPEN, WPARAM(0), LPARAM(0)) };
+            }
+            LRESULT(0)
+        }
         WM_MOUSELEAVE => {
+            // Only cancels a pending dwell; must not close an already-open
+            // submenu, since leaving this window's client area is exactly
+            // how the pointer crosses into it (see WM_MOUSEMOVE above).
+            let _ = unsafe { KillTimer(Some(hwnd), SUBMENU_HOVER_TIMER) };
             POPUP.with(|p| {
                 let Ok(mut b) = p.try_borrow_mut() else { return };
                 let Some(i) = b.as_mut() else { return };
@@ -1222,24 +1264,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                         };
                         dismiss(hwnd);
                     }
-                    Item::HudToggle => {
-                        // Stays open: the owner flips the setting, saves,
-                        // and re-shows with the rebuilt item list.
-                        let _ = unsafe {
-                            PostMessageW(Some(owner), HUD_TOGGLE_CLICKED, WPARAM(0), LPARAM(0))
-                        };
-                    }
-                    Item::LayerToggle(n) => {
-                        let _ = unsafe {
-                            PostMessageW(
-                                Some(owner),
-                                LAYER_TOGGLE_CLICKED,
-                                WPARAM(n as usize),
-                                LPARAM(0),
-                            )
-                        };
-                    }
-                    Item::Status | Item::Layer | Item::Separator => {}
+                    // The HudMenu row opens on hover dwell; a click on it
+                    // does nothing extra.
+                    Item::Status | Item::Layer | Item::Separator | Item::HudMenu => {}
                 }
             }
             LRESULT(0)

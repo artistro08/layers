@@ -1,8 +1,9 @@
-The glyph path data in src/icon.rs is derived from three icons in
+The glyph path data in src/icon.rs is derived from four icons in
 microsoft/fluentui-system-icons: ic_fluent_layer_24_filled (the tray
 and popup layer glyph), ic_fluent_power_20_filled (the popup Quit
-glyph), and ic_fluent_checkmark_20_filled (the popup's HUD/layer
-toggle checkmarks).
+glyph), ic_fluent_checkmark_20_filled (the HUD submenu's toggle
+checkmarks), and ic_fluent_chevron_right_20_filled (the popup's HUD
+row, indicating its hover submenu).
 
 MIT License
 

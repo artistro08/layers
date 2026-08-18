@@ -354,4 +354,31 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn the_vendored_chevron_glyph_parses_without_error() {
+        let figures = parse_path(crate::icon::CHEVRON_PATH).unwrap();
+        assert!(!figures.is_empty());
+        assert!(figures.iter().all(|f| !f.segments.is_empty()));
+    }
+
+    #[test]
+    fn the_vendored_chevron_glyph_stays_inside_its_view_box() {
+        for f in parse_path(crate::icon::CHEVRON_PATH).unwrap() {
+            let mut pts = vec![f.start];
+            for s in &f.segments {
+                match s {
+                    Segment::Line(a) => pts.push(*a),
+                    Segment::Cubic(a, b, c) => pts.extend([*a, *b, *c]),
+                }
+            }
+            for pt in pts {
+                assert!(
+                    (0.0..=crate::icon::CHEVRON_VIEWBOX).contains(&pt.x)
+                        && (0.0..=crate::icon::CHEVRON_VIEWBOX).contains(&pt.y),
+                    "point {pt:?} escapes the view box"
+                );
+            }
+        }
+    }
 }

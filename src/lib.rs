@@ -3,6 +3,7 @@ pub mod hud;
 pub mod icon;
 pub mod popup;
 pub mod protocol;
+pub mod submenu;
 pub mod compose;
 pub mod device;
 pub mod render;

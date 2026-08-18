@@ -1,7 +1,7 @@
 // No console window.
 #![windows_subsystem = "windows"]
 
-use layers::{device, hud, icon, popup, protocol, render, settings, theme, tray};
+use layers::{device, hud, icon, popup, protocol, render, settings, submenu, theme, tray};
 use std::cell::{Cell, RefCell};
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
@@ -20,6 +20,7 @@ struct App {
     renderer: render::Renderer,
     tray: tray::Tray,
     popup: popup::Popup,
+    submenu: submenu::Submenu,
     hud: hud::Hud,
     state: device::State,
     device: Option<device::Handle>,
@@ -109,6 +110,7 @@ fn run() -> Result<()> {
                 renderer: render::Renderer::new()?,
                 tray: tray::Tray::new(hwnd)?,
                 popup: popup::Popup::new(hwnd)?,
+                submenu: submenu::Submenu::new(instance.into(), hwnd)?,
                 hud: hud::Hud::new(instance.into())?,
                 state: device::State {
                     status: device::Status::Disconnected,
@@ -203,7 +205,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         tray::WM_DEVICE => {
             let mut fire_hud = false;
             let mut new_layers = protocol::Layers(0);
-            let mut seen_changed = false;
             APP.with(|a| {
                 if let Some(app) = a.borrow_mut().as_mut() {
                     let packed = wp.0;
@@ -217,8 +218,6 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     app.state.layers = layers;
                     app.state.status = status;
 
-                    seen_changed = app.settings.mark_seen(layers);
-
                     // Fires only on an actual layer change while already
                     // connected, not on the Layer-0 state a fresh connect or
                     // reconnect legitimately starts from, and only when the
@@ -231,22 +230,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     new_layers = layers;
                 }
             });
-            if seen_changed {
-                APP.with(|a| {
-                    if let Some(app) = a.borrow_mut().as_mut() {
-                        app.settings.save();
-                    }
-                });
-            }
             refresh(hwnd);
-            // An open popup would otherwise show the previous layer, or miss
-            // a layer that was just newly seen.
+            // An open popup would otherwise show the previous layer.
             APP.with(|a| {
                 if let Some(app) = a.borrow_mut().as_mut() {
                     if app.popup.is_visible() {
                         let state = app.state;
-                        let settings = app.settings;
-                        let _ = app.popup.show(&app.renderer, state, &settings);
+                        let _ = app.popup.show(&app.renderer, state);
                     }
                 }
             });
@@ -268,13 +258,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 APP.with(|a| {
                     if let Some(app) = a.borrow_mut().as_mut() {
                         let state = app.state;
-                        let settings = app.settings;
                         // popup::show() calls SetForegroundWindow while this
                         // APP.borrow_mut() is still live. Safe only because
                         // this wndproc handles no activation message; a
                         // WM_ACTIVATE/WM_ACTIVATEAPP arm here that called
                         // refresh() would re-enter APP and panic.
-                        let _ = app.popup.show(&app.renderer, state, &settings);
+                        let _ = app.popup.show(&app.renderer, state);
                     }
                 });
             }
@@ -284,50 +273,71 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             let _ = unsafe { windows::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd) };
             LRESULT(0)
         }
-        popup::HUD_TOGGLE_CLICKED => {
+        popup::HUD_MENU_OPEN => {
+            APP.with(|a| {
+                let Ok(mut borrow) = a.try_borrow_mut() else { return };
+                let Some(app) = borrow.as_mut() else { return };
+                if let Some(anchor) = app.popup.hud_menu_row_rect() {
+                    let settings = app.settings;
+                    let _ = app.submenu.show(&app.renderer, &settings, anchor);
+                }
+            });
+            LRESULT(0)
+        }
+        popup::HUD_MENU_CLOSE => {
+            APP.with(|a| {
+                let Ok(mut borrow) = a.try_borrow_mut() else { return };
+                let Some(app) = borrow.as_mut() else { return };
+                app.submenu.hide();
+            });
+            LRESULT(0)
+        }
+        submenu::HUD_TOGGLE_CLICKED => {
             APP.with(|a| {
                 let Ok(mut borrow) = a.try_borrow_mut() else { return };
                 let Some(app) = borrow.as_mut() else { return };
                 app.settings.hud_enabled = !app.settings.hud_enabled;
                 app.settings.save();
-                if app.popup.is_visible() {
-                    let state = app.state;
+                if let Some(anchor) = app.popup.hud_menu_row_rect() {
                     let settings = app.settings;
-                    let _ = app.popup.show(&app.renderer, state, &settings);
+                    let _ = app.submenu.show(&app.renderer, &settings, anchor);
                 }
             });
             LRESULT(0)
         }
-        popup::LAYER_TOGGLE_CLICKED => {
+        submenu::LAYER_TOGGLE_CLICKED => {
             let layer = (wp.0 & 0xFF) as u8;
             APP.with(|a| {
                 let Ok(mut borrow) = a.try_borrow_mut() else { return };
                 let Some(app) = borrow.as_mut() else { return };
                 app.settings.hud_suppressed ^= 1 << layer;
                 app.settings.save();
-                if app.popup.is_visible() {
-                    let state = app.state;
+                if let Some(anchor) = app.popup.hud_menu_row_rect() {
                     let settings = app.settings;
-                    let _ = app.popup.show(&app.renderer, state, &settings);
+                    let _ = app.submenu.show(&app.renderer, &settings, anchor);
                 }
             });
             LRESULT(0)
         }
         tray::WM_THEME | WM_DPICHANGED | WM_SETTINGCHANGE => {
             refresh(hwnd);
-            // An open popup would otherwise show stale colors/DPI through a
-            // theme, accent, or DPI change.
+            // An open popup (or its submenu) would otherwise show stale
+            // colors/DPI through a theme, accent, or DPI change.
             APP.with(|a| {
                 // Same reentrancy hazard as refresh(): a nested
                 // WM_SETTINGCHANGE can arrive while an outer call still
                 // holds this borrow. Bail; the popup re-reads theme and
                 // accent on its next paint.
                 let Ok(mut borrow) = a.try_borrow_mut() else { return };
-                if let Some(app) = borrow.as_mut() {
-                    if app.popup.is_visible() {
-                        let state = app.state;
+                let Some(app) = borrow.as_mut() else { return };
+                if app.popup.is_visible() {
+                    let state = app.state;
+                    let _ = app.popup.show(&app.renderer, state);
+                }
+                if app.submenu.is_visible() {
+                    if let Some(anchor) = app.popup.hud_menu_row_rect() {
                         let settings = app.settings;
-                        let _ = app.popup.show(&app.renderer, state, &settings);
+                        let _ = app.submenu.show(&app.renderer, &settings, anchor);
                     }
                 }
             });
