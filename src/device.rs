@@ -90,6 +90,23 @@ fn session(
         .ok_or(())?;
     let dev = info.open_device(&api).map_err(|_| ())?;
 
+    // The monitor input reports live in a second top-level collection that
+    // Windows exposes as its own device path, so they need their own handle.
+    // Pinned to the same physical device via vendor/product/serial/interface
+    // in case more than one HID Remapper is attached.
+    let monitor_info = api
+        .device_list()
+        .find(|d| {
+            d.usage_page() == protocol::CONFIG_USAGE_PAGE
+                && d.usage() == protocol::MONITOR_USAGE
+                && d.vendor_id() == info.vendor_id()
+                && d.product_id() == info.product_id()
+                && d.serial_number() == info.serial_number()
+                && d.interface_number() == info.interface_number()
+        })
+        .ok_or(())?;
+    let monitor_dev = monitor_info.open_device(&api).map_err(|_| ())?;
+
     // Version gate. Nothing is written to the device until the firmware
     // confirms it speaks the protocol version these opcodes belong to.
     dev.send_feature_report(&protocol::get_config())
@@ -126,7 +143,7 @@ fn session(
 
     let mut buf = [0u8; protocol::MONITOR_REPORT_LEN];
     while !stop.load(Ordering::Relaxed) {
-        match dev.read_timeout(&mut buf, READ_TIMEOUT_MS) {
+        match monitor_dev.read_timeout(&mut buf, READ_TIMEOUT_MS) {
             Ok(0) => continue, // timeout, the device is simply idle
             Ok(_) => {
                 if let Some(layers) = protocol::parse_monitor_report(&buf) {

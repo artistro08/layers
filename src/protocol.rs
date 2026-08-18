@@ -18,6 +18,10 @@ pub const CMD_SET_MONITOR_ENABLED: u8 = 22;
 
 pub const CONFIG_USAGE_PAGE: u16 = 0xFF00;
 pub const CONFIG_USAGE: u16 = 0x0020;
+/// The monitor input reports live in a second top-level collection. Windows
+/// exposes each top-level collection as its own device path, so reading them
+/// needs a separate handle from the one used for config feature reports.
+pub const MONITOR_USAGE: u16 = 0x0021;
 
 /// The firmware computes the CRC over everything between the report id and
 /// the CRC field itself.
