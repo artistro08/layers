@@ -18,7 +18,12 @@ pub const PADDING: f32 = 4.0;
 /// How far the hover highlight is inset from the panel edges. Deliberately
 /// independent of PADDING so tuning the panel's vertical breathing room does
 /// not also resize the highlight.
-const HOVER_INSET: f32 = 4.0;
+///
+/// Split per axis: Windows insets the highlight noticeably from the panel's
+/// left and right edges, while keeping it tall enough that a row's contents
+/// are not pressed against its top and bottom.
+const HOVER_INSET_X: f32 = 6.0;
+const HOVER_INSET_Y: f32 = 3.0;
 pub const CORNER: f32 = 8.0;
 /// Height of the rule between the Layer and Quit rows: 3px gap, 1px rule,
 /// 3px gap.
@@ -317,8 +322,8 @@ const ICON_SIZE: f32 = 16.0;
 const TEXT_LEFT: f32 = 44.0;
 /// Right inset of the layer pill.
 const TEXT_RIGHT: f32 = 16.0;
-const PILL_W: f32 = 28.0;
-const PILL_H: f32 = 22.0;
+const PILL_W: f32 = 24.0;
+const PILL_H: f32 = 18.0;
 
 const WHITE: Color = Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
 
@@ -562,11 +567,15 @@ fn row_rect(row: Row, scale: f32) -> D2D_RECT_F {
 }
 
 fn inset(r: D2D_RECT_F, by: f32) -> D2D_RECT_F {
+    inset_xy(r, by, by)
+}
+
+fn inset_xy(r: D2D_RECT_F, x: f32, y: f32) -> D2D_RECT_F {
     D2D_RECT_F {
-        left: r.left + by,
-        top: r.top + by,
-        right: r.right - by,
-        bottom: r.bottom - by,
+        left: r.left + x,
+        top: r.top + y,
+        right: r.right - x,
+        bottom: r.bottom - y,
     }
 }
 
@@ -736,7 +745,7 @@ fn paint(
 
         if let Some(row) = hovered {
             let rr = D2D1_ROUNDED_RECT {
-                rect: inset(row_rect(row, s), HOVER_INSET * s),
+                rect: inset_xy(row_rect(row, s), HOVER_INSET_X * s, HOVER_INSET_Y * s),
                 radiusX: 4.0 * s,
                 radiusY: 4.0 * s,
             };

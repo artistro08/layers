@@ -6,7 +6,7 @@ DefaultDirName={localappdata}\Layers
 DefaultGroupName=Layers
 DisableProgramGroupPage=yes
 DisableDirPage=yes
-UninstallDisplayIcon={app}\layers.exe
+UninstallDisplayIcon={app}\Layers.exe
 OutputDir=Output
 OutputBaseFilename=layers-setup
 Compression=lzma2
@@ -18,21 +18,21 @@ ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
-Source: "..\target\release\layers.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\target\release\Layers.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\assets\NOTICE-fluentui.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Layers"; Filename: "{app}\layers.exe"
+Name: "{group}\Layers"; Filename: "{app}\Layers.exe"
 
 [Tasks]
 Name: "startup"; Description: "Start Layers when I sign in"; GroupDescription: "Additional options:"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Layers"; ValueData: """{app}\layers.exe"""; Flags: uninsdeletevalue; Tasks: startup
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Layers"; ValueData: """{app}\Layers.exe"""; Flags: uninsdeletevalue; Tasks: startup
 
 [Run]
-Filename: "{app}\layers.exe"; Description: "Start Layers now"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Layers.exe"; Description: "Start Layers now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
 ; Close the running instance so the exe is not locked during uninstall.
-Filename: "taskkill.exe"; Parameters: "/F /IM layers.exe"; Flags: runhidden skipifdoesntexist
+Filename: "taskkill.exe"; Parameters: "/F /IM Layers.exe"; Flags: runhidden skipifdoesntexist

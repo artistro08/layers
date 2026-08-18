@@ -8,7 +8,7 @@ name = "layers"
 path = "src/lib.rs"
 
 [[bin]]
-name = "layers"
+name = "Layers"
 path = "src/main.rs"
 
 [dependencies]
