@@ -533,7 +533,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         // this window — so WM_LBUTTONUP is delivered to a dead window and no
         // click is ever seen. MA_NOACTIVATE keeps the click from disturbing
         // focus at all.
-        WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
         WM_LBUTTONUP => {
             let idx = SUBMENU.with(|s| {
                 let Ok(b) = s.try_borrow() else { return None };
