@@ -57,6 +57,20 @@ impl Settings {
         self.hud_enabled
             && (self.hud_suppressed & (1 << Settings::displayed_layer(layers))) == 0
     }
+
+    /// Whether a HUD should be shown for a move between two layer states.
+    ///
+    /// Both endpoints must be allowed. Suppressing a layer is meant to make
+    /// toggling it silent in *both* directions — releasing a suppressed
+    /// layer should not announce the layer you land back on. Coming off an
+    /// allowed layer still announces the destination normally.
+    pub fn hud_allowed_transition(
+        &self,
+        from: protocol::Layers,
+        to: protocol::Layers,
+    ) -> bool {
+        self.hud_allowed(from) && self.hud_allowed(to)
+    }
 }
 
 mod reg {
@@ -163,5 +177,33 @@ mod tests {
     #[test]
     fn displayed_layer_of_multiple_bits_is_the_highest() {
         assert_eq!(Settings::displayed_layer(protocol::Layers(0b1010)), 3);
+    }
+
+    #[test]
+    fn returning_from_a_suppressed_layer_stays_silent() {
+        // Layer 1 suppressed: holding it is silent, and so is releasing it.
+        let s = Settings { hud_enabled: true, hud_suppressed: 0b10 };
+        assert!(!s.hud_allowed_transition(protocol::Layers(0b1), protocol::Layers(0b10)));
+        assert!(!s.hud_allowed_transition(protocol::Layers(0b10), protocol::Layers(0b1)));
+    }
+
+    #[test]
+    fn returning_from_an_allowed_layer_still_announces_the_destination() {
+        // Layer 5 allowed: both the activation and the release show.
+        let s = Settings { hud_enabled: true, hud_suppressed: 0b10 };
+        assert!(s.hud_allowed_transition(protocol::Layers(0b1), protocol::Layers(0b100000)));
+        assert!(s.hud_allowed_transition(protocol::Layers(0b100000), protocol::Layers(0b1)));
+    }
+
+    #[test]
+    fn a_transition_between_two_suppressed_layers_is_silent() {
+        let s = Settings { hud_enabled: true, hud_suppressed: 0b110 };
+        assert!(!s.hud_allowed_transition(protocol::Layers(0b10), protocol::Layers(0b100)));
+    }
+
+    #[test]
+    fn the_master_switch_silences_every_transition() {
+        let s = Settings { hud_enabled: false, hud_suppressed: 0 };
+        assert!(!s.hud_allowed_transition(protocol::Layers(0b1), protocol::Layers(0b100000)));
     }
 }

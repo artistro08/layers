@@ -32,7 +32,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TR
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, LoadCursorW, PostMessageW, RegisterClassW, SetWindowPos,
     ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE,
-    SW_SHOWNOACTIVATE, WM_APP, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED,
+    MA_NOACTIVATE, SW_SHOWNOACTIVATE, WM_APP, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+    WNDCLASSW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows_numerics::Vector2;
@@ -527,6 +528,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             });
             LRESULT(0)
         }
+        // Without this the mouse-down triggers an activation attempt. The
+        // popup then takes WM_KILLFOCUS, runs its dismissal path, and hides
+        // this window — so WM_LBUTTONUP is delivered to a dead window and no
+        // click is ever seen. MA_NOACTIVATE keeps the click from disturbing
+        // focus at all.
+        WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE as isize),
         WM_LBUTTONUP => {
             let idx = SUBMENU.with(|s| {
                 let Ok(b) = s.try_borrow() else { return None };

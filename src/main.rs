@@ -226,7 +226,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     fire_hud = layers != prev_layers
                         && status == device::Status::Connected
                         && prev_status == device::Status::Connected
-                        && app.settings.hud_allowed(layers);
+                        && app.settings.hud_allowed_transition(prev_layers, layers);
                     new_layers = layers;
                 }
             });
