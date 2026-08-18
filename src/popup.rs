@@ -13,7 +13,12 @@ pub const QUIT_CLICKED: u32 = WM_APP + 4;
 /// Logical layout in pixels at 96 dpi.
 pub const WIDTH: f32 = 220.0;
 pub const ROW_HEIGHT: f32 = 32.0;
-pub const PADDING: f32 = 6.0;
+pub const PADDING: f32 = 4.0;
+
+/// How far the hover highlight is inset from the panel edges. Deliberately
+/// independent of PADDING so tuning the panel's vertical breathing room does
+/// not also resize the highlight.
+const HOVER_INSET: f32 = 4.0;
 pub const CORNER: f32 = 8.0;
 /// Height of the rule between the Layer and Quit rows: 3px gap, 1px rule,
 /// 3px gap.
@@ -731,7 +736,7 @@ fn paint(
 
         if let Some(row) = hovered {
             let rr = D2D1_ROUNDED_RECT {
-                rect: inset(row_rect(row, s), PADDING / 2.0 * s),
+                rect: inset(row_rect(row, s), HOVER_INSET * s),
                 radiusX: 4.0 * s,
                 radiusY: 4.0 * s,
             };
