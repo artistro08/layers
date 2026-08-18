@@ -650,7 +650,17 @@ pub(crate) fn draw_icon(
 /// alpha, since this app has no D3D11 device to run a real D2D blur effect
 /// through. Offset down slightly for a light-from-above look. Drawn before
 /// the panel so the panel's own fill covers the inner steps.
-fn draw_shadow(rt: &ID2D1RenderTarget, w: f32, h: f32, s: f32) -> Result<()> {
+/// Approximates a blur with concentric rounded rects, since a real D2D
+/// blur effect would need an ID2D1DeviceContext and therefore a D3D11
+/// device. `corner` is the panel's own radius; the shadow rings grow
+/// outward from it.
+pub(crate) fn draw_shadow(
+    rt: &ID2D1RenderTarget,
+    w: f32,
+    h: f32,
+    s: f32,
+    corner: f32,
+) -> Result<()> {
     const STEPS: i32 = 12;
     let offset_y = 2.0 * s;
     for i in 0..STEPS {
@@ -669,8 +679,8 @@ fn draw_shadow(rt: &ID2D1RenderTarget, w: f32, h: f32, s: f32) -> Result<()> {
             rt.FillRoundedRectangle(
                 &D2D1_ROUNDED_RECT {
                     rect,
-                    radiusX: CORNER * s + remaining,
-                    radiusY: CORNER * s + remaining,
+                    radiusX: corner * s + remaining,
+                    radiusY: corner * s + remaining,
                 },
                 &brush,
             );
@@ -728,7 +738,7 @@ fn paint(
     let s = scale;
 
     let bgra = r.render_bgra(w as u32, h as u32, |rt| unsafe {
-        draw_shadow(rt, w as f32, h as f32, s)?;
+        draw_shadow(rt, w as f32, h as f32, s, CORNER)?;
 
         // Surface and border. Half a stroke of inset keeps the border inside
         // the panel's own edge instead of half-clipped by it. The panel

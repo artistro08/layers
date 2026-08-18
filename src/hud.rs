@@ -16,8 +16,8 @@ use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{
     COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM,
 };
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F, D2D_RECT_F};
-use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, D2D1_ROUNDED_RECT};
+use windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F;
+use windows::Win32::Graphics::Direct2D::D2D1_ROUNDED_RECT;
 use windows::Win32::Graphics::DirectWrite::{
     DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_METRICS,
 };
@@ -44,7 +44,7 @@ const HUD_ICON: f32 = 20.0;
 /// From the work area's bottom edge to the panel's bottom.
 const BOTTOM_GAP: f32 = 80.0;
 /// Transparent bleed around the panel that the drop shadow is drawn into.
-const SHADOW_MARGIN: f32 = 16.0;
+use crate::popup::SHADOW_MARGIN;
 /// Gap between the glyph and the label, matching popup.rs's icon-to-text
 /// convention (`TEXT_LEFT - ICON_LEFT - ICON_SIZE`).
 const ICON_TEXT_GAP: f32 = 10.0;
@@ -243,41 +243,6 @@ fn alpha_at(elapsed_ms: u64, hold_ms: u64, fade_ms: u64) -> u8 {
     ((remaining as f64 / fade_ms as f64) * 255.0).round() as u8
 }
 
-/// Approximates the same soft drop shadow `popup.rs` draws, sized to the
-/// HUD's own corner radius. `popup::draw_shadow` bakes in `popup::CORNER`
-/// (8px) rather than taking it as a parameter, and the constraints here only
-/// allow changing item visibility in popup.rs, not its signatures, so with a
-/// different corner radius (12px) this one small function is duplicated
-/// rather than reused.
-fn draw_shadow(rt: &ID2D1RenderTarget, w: f32, h: f32, s: f32) -> Result<()> {
-    const STEPS: i32 = 12;
-    let offset_y = 2.0 * s;
-    for i in 0..STEPS {
-        let inset_amt = i as f32 * SHADOW_MARGIN * s / STEPS as f32;
-        let remaining = SHADOW_MARGIN * s - inset_amt;
-        let rect = D2D_RECT_F {
-            left: inset_amt,
-            top: inset_amt + offset_y,
-            right: w - inset_amt,
-            bottom: h - inset_amt + offset_y,
-        };
-        let t = i as f32 / (STEPS - 1) as f32;
-        let color = D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.06 * t * t };
-        unsafe {
-            let brush = rt.CreateSolidColorBrush(&color, None)?;
-            rt.FillRoundedRectangle(
-                &D2D1_ROUNDED_RECT {
-                    rect,
-                    radiusX: HUD_CORNER * s + remaining,
-                    radiusY: HUD_CORNER * s + remaining,
-                },
-                &brush,
-            );
-        }
-    }
-    Ok(())
-}
-
 /// Measures a run of text set in `format`, in the same (already-scaled)
 /// units as `format`'s font size.
 fn measure_width(r: &Renderer, s: &str, format: &windows::Win32::Graphics::DirectWrite::IDWriteTextFormat) -> Result<f32> {
@@ -300,7 +265,7 @@ fn paint(r: &Renderer, label: &str, scale: f32) -> Result<(Vec<u8>, i32, i32)> {
     let s = scale;
 
     let bgra = r.render_bgra(w as u32, h as u32, |rt| unsafe {
-        draw_shadow(rt, w as f32, h as f32, s)?;
+        crate::popup::draw_shadow(rt, w as f32, h as f32, s, HUD_CORNER)?;
 
         let panel_rect = popup::inset(
             D2D_RECT_F {
