@@ -861,10 +861,11 @@ fn paint(
         // Separator between the Layer and Quit rows.
         let sep_y = row.bottom + SEPARATOR_H / 2.0 * s;
         let sep_brush = rt.CreateSolidColorBrush(&separator(dark), None)?;
-        // Edge to edge: `row` already spans the panel, so no text insets here.
+        // Inset to the same edges as the hover highlight, so the rule lines
+        // up with the fill rather than floating wider or narrower than it.
         rt.DrawLine(
-            Vector2 { X: row.left, Y: sep_y },
-            Vector2 { X: row.right, Y: sep_y },
+            Vector2 { X: row.left + HOVER_INSET_X * s, Y: sep_y },
+            Vector2 { X: row.right - HOVER_INSET_X * s, Y: sep_y },
             &sep_brush,
             s,
             None,
