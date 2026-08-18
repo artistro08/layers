@@ -75,6 +75,7 @@ dependencies = [
  "crc32fast",
  "hidapi",
  "windows",
+ "windows-numerics",
  "winresource",
 ]
 
