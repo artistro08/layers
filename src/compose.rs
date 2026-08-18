@@ -19,28 +19,6 @@ impl Alpha {
     }
 }
 
-/// `out = glyph * (1 - hole) + digit`, saturating.
-///
-/// The hole knocks a transparent well into the glyph so the digit stays
-/// readable over it, and stays transparent over any taskbar color.
-///
-/// # Panics
-/// If the three buffers differ in size. They are always produced by the same
-/// render pass, so a mismatch is a bug rather than bad input.
-pub fn combine(glyph: &Alpha, hole: &Alpha, digit: &Alpha) -> Alpha {
-    assert!(
-        glyph.w == hole.w && glyph.w == digit.w && glyph.h == hole.h && glyph.h == digit.h,
-        "layers must be the same size"
-    );
-    let px = (0..glyph.px.len())
-        .map(|i| {
-            let kept = glyph.px[i] as u32 * (255 - hole.px[i] as u32) / 255;
-            (kept + digit.px[i] as u32).min(255) as u8
-        })
-        .collect();
-    Alpha { w: glyph.w, h: glyph.h, px }
-}
-
 /// Box-filter downsample by an integer factor. Rendering at 4x and reducing
 /// gives the digit clean edges at 16 pixels.
 ///
@@ -87,37 +65,6 @@ mod tests {
 
     fn filled(w: usize, h: usize, v: u8) -> Alpha {
         Alpha { w, h, px: vec![v; w * h] }
-    }
-
-    #[test]
-    fn with_no_hole_and_no_digit_the_glyph_passes_through() {
-        let out = combine(&filled(2, 2, 200), &Alpha::new(2, 2), &Alpha::new(2, 2));
-        assert_eq!(out.px, vec![200; 4]);
-    }
-
-    #[test]
-    fn a_fully_opaque_hole_erases_the_glyph_beneath_it() {
-        let out = combine(&filled(2, 2, 255), &filled(2, 2, 255), &Alpha::new(2, 2));
-        assert_eq!(out.px, vec![0; 4]);
-    }
-
-    #[test]
-    fn a_partial_hole_attenuates_the_glyph_proportionally() {
-        let out = combine(&filled(1, 1, 200), &filled(1, 1, 128), &Alpha::new(1, 1));
-        // 200 * (1 - 128/255) = 99.6
-        assert!((out.px[0] as i32 - 100).abs() <= 1, "got {}", out.px[0]);
-    }
-
-    #[test]
-    fn the_digit_is_added_inside_the_hole_it_sits_in() {
-        let out = combine(&filled(1, 1, 255), &filled(1, 1, 255), &filled(1, 1, 255));
-        assert_eq!(out.px[0], 255);
-    }
-
-    #[test]
-    fn the_sum_saturates_rather_than_wrapping() {
-        let out = combine(&filled(1, 1, 255), &Alpha::new(1, 1), &filled(1, 1, 255));
-        assert_eq!(out.px[0], 255);
     }
 
     #[test]
