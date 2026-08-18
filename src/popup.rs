@@ -276,7 +276,7 @@ use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, SIZE, WPARAM};
 use crate::geometry::Segment;
 use windows::Win32::Graphics::Direct2D::Common::{
-    D2D1_BEZIER_SEGMENT, D2D1_COLOR_F as Color, D2D1_FIGURE_BEGIN_FILLED,
+    D2D1_BEZIER_SEGMENT, D2D1_FIGURE_BEGIN_FILLED,
     D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_WINDING, D2D_RECT_F,
 };
 use windows::Win32::Graphics::Direct2D::{
@@ -284,8 +284,8 @@ use windows::Win32::Graphics::Direct2D::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     IDWriteTextFormat, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-    DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
-    DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
+    DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL,
+    DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT,
     DWRITE_TEXT_ALIGNMENT_LEADING,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -326,10 +326,7 @@ const TEXT_LEFT: f32 = 38.0;
 const LAYER_ICON_SIZE: f32 = 19.0;
 /// Right inset of the layer pill.
 const TEXT_RIGHT: f32 = 16.0;
-const PILL_W: f32 = 24.0;
-const PILL_H: f32 = 18.0;
 
-const WHITE: Color = Color { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
 
 /// Popup state the window procedure needs. Kept out of `main.rs`'s `APP` so
 /// the popup's messages, which arrive on the same UI thread, can never
@@ -806,7 +803,6 @@ fn paint(
 
         // Layer row.
         let row = row_rect(Row::Layer, s);
-        let middle = (row.top + row.bottom) / 2.0;
         draw_icon(
             rt,
             icon::GLYPH_PATH,
@@ -821,54 +817,11 @@ fn paint(
             &f,
             D2D_RECT_F {
                 left: row.left + TEXT_LEFT * s,
-                right: row.right - (TEXT_RIGHT + PILL_W + PADDING) * s,
+                right: row.right - TEXT_RIGHT * s,
                 ..row
             },
             &ink,
         );
-        let badge = match state.status {
-            device::Status::Connected => state.layers.badge(),
-            device::Status::Disconnected
-            | device::Status::NoSlot
-            | device::Status::VersionMismatch => None,
-        };
-        // A layer above 0 gets the accent pill with its digit. Anything
-        // else — disconnected, no slot, or plain layer 0 — draws nothing on
-        // the right, rather than a placeholder that looks like a missing
-        // keyboard accelerator.
-        if let Some(n) = badge {
-            let pill = D2D_RECT_F {
-                left: row.right - (TEXT_RIGHT + PILL_W) * s,
-                right: row.right - TEXT_RIGHT * s,
-                top: middle - PILL_H / 2.0 * s,
-                bottom: middle + PILL_H / 2.0 * s,
-            };
-            let (ar, ag, ab) = theme::accent();
-            let accent = Color {
-                r: ar as f32 / 255.0,
-                g: ag as f32 / 255.0,
-                b: ab as f32 / 255.0,
-                a: 1.0,
-            };
-            let brush = rt.CreateSolidColorBrush(&accent, None)?;
-            rt.FillRoundedRectangle(
-                &D2D1_ROUNDED_RECT {
-                    rect: pill,
-                    radiusX: PILL_H / 2.0 * s,
-                    radiusY: PILL_H / 2.0 * s,
-                },
-                &brush,
-            );
-            let white = rt.CreateSolidColorBrush(&WHITE, None)?;
-            let f = format(
-                r,
-                12.0 * s,
-                DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                DWRITE_TEXT_ALIGNMENT_CENTER,
-            )?;
-            draw_text(rt, &n.to_string(), &f, pill, &white);
-        }
-
         // Separator between the Layer and Quit rows.
         let sep_y = row.bottom + SEPARATOR_H / 2.0 * s;
         let sep_brush = rt.CreateSolidColorBrush(&separator(dark), None)?;
