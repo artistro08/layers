@@ -1,5 +1,7 @@
-The tray glyph path data in src/icon.rs is derived from
-ic_fluent_layer_24_filled in microsoft/fluentui-system-icons.
+The glyph path data in src/icon.rs is derived from two icons in
+microsoft/fluentui-system-icons: ic_fluent_layer_24_filled (the tray
+and popup layer glyph) and ic_fluent_power_20_filled (the popup Quit
+glyph).
 
 MIT License
 

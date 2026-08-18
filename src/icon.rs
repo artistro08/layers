@@ -7,7 +7,14 @@ pub const GLYPH_PATH: &str = "M13.3867 3.42476L19.7519 7.66821C20.2115 7.97456 2
 /// The glyph is authored on a 24x24 grid.
 pub const GLYPH_VIEWBOX: f32 = 24.0;
 
-use crate::compose::{combine, downsample, to_premultiplied_bgra, Alpha};
+/// `ic_fluent_power_20_filled` from microsoft/fluentui-system-icons, MIT.
+/// See assets/NOTICE-fluentui.txt.
+pub const POWER_PATH: &str = "M10.75 2.5C10.75 2.08579 10.4142 1.75 10 1.75C9.58579 1.75 9.25 2.08579 9.25 2.5V8.5C9.25 8.91421 9.58579 9.25 10 9.25C10.4142 9.25 10.75 8.91421 10.75 8.5V2.5ZM13.7432 4.00091C13.3843 3.79418 12.9257 3.91757 12.719 4.2765C12.5122 4.63544 12.6356 5.094 12.9946 5.30073C14.1393 5.96007 15.0345 6.9788 15.5412 8.19885C16.0478 9.4189 16.1377 10.7721 15.7968 12.0484C15.4559 13.3247 14.7032 14.4528 13.6557 15.2578C12.6081 16.0627 11.3242 16.4993 10.0031 16.5C8.68207 16.5007 7.3977 16.0654 6.3493 15.2616C5.30091 14.4578 4.54711 13.3304 4.20485 12.0545C3.8626 10.7785 3.95103 9.42523 4.45643 8.20465C4.96182 6.98407 5.85592 5.96441 7 5.30387C7.35872 5.09676 7.48163 4.63807 7.27452 4.27935C7.06742 3.92063 6.60872 3.79773 6.25 4.00483C4.8199 4.8305 3.70227 6.10508 3.07053 7.6308C2.43879 9.15653 2.32825 10.8481 2.75607 12.4431C3.18388 14.038 4.12613 15.4472 5.43663 16.452C6.74712 17.4567 8.35259 18.0009 10.0039 18C11.6553 17.9992 13.2602 17.4533 14.5696 16.4472C15.879 15.4411 16.8198 14.0309 17.246 12.4355C17.6721 10.8401 17.5598 9.14861 16.9265 7.62355C16.2931 6.09849 15.1742 4.82508 13.7432 4.00091Z";
+
+/// The power glyph is authored on a 20x20 grid.
+pub const POWER_VIEWBOX: f32 = 20.0;
+
+use crate::compose::{downsample, to_premultiplied_bgra};
 use crate::geometry::Segment;
 use crate::render::Renderer;
 use windows::core::{Result, PCWSTR};
@@ -15,10 +22,10 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED, D2D1_FIGURE_END_CLOSED,
     D2D1_FILL_MODE_WINDING, D2D_RECT_F,
 };
-use windows::Win32::Graphics::Direct2D::{ID2D1RenderTarget, D2D1_ROUNDED_RECT};
+use windows::Win32::Graphics::Direct2D::ID2D1RenderTarget;
 use windows_numerics::Vector2;
 use windows::Win32::Graphics::DirectWrite::{
-    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
+    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_BOLD,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT_CENTER,
 };
 use windows::Win32::Graphics::Gdi::{
@@ -30,17 +37,21 @@ use windows::Win32::UI::WindowsAndMessaging::{CreateIconIndirect, HICON, ICONINF
 /// Supersampling factor. The digit needs it far more than the glyph does.
 const SS: usize = 4;
 
-/// Badge geometry as a fraction of the icon box, placed so the digit clears
-/// the glyph's band spacing.
-const BADGE_CENTER: f32 = 0.68;
-const BADGE_RADIUS: f32 = 0.34;
-const DIGIT_HEIGHT: f32 = 0.52;
+/// Digit em size as a fraction of the icon box.
+///
+/// The digit gets the whole icon rather than a badge corner. A badge that
+/// shared 16 physical pixels with the glyph left roughly five pixels of ink
+/// for the number, which was not readable at 100% scaling.
+const DIGIT_HEIGHT: f32 = 1.0;
 
 const WHITE: D2D1_COLOR_F = D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 1.0 };
 
 /// Builds the tray icon at `size` logical pixels.
 ///
-/// `badge` is `None` for layer 0, which renders as the bare glyph.
+/// Layer 0 renders as the bare Fluent glyph, so the app still has an identity
+/// at rest. Any other layer renders as that digit alone, filling the icon —
+/// when a layer is active the number is the thing worth reading, and at 16px
+/// there is not room for both.
 pub fn build(
     r: &Renderer,
     badge: Option<u8>,
@@ -49,16 +60,12 @@ pub fn build(
 ) -> Result<HICON> {
     let hi = size * SS;
 
-    let glyph = r.render_alpha(hi, |rt| draw_glyph(rt, hi as f32))?;
-    let (hole, digit) = match badge {
-        None => (Alpha::new(hi, hi), Alpha::new(hi, hi)),
-        Some(n) => (
-            r.render_alpha(hi, |rt| draw_hole(rt, hi as f32))?,
-            r.render_alpha(hi, |rt| draw_digit(r, rt, hi as f32, n))?,
-        ),
+    let coverage = match badge {
+        None => r.render_alpha(hi, |rt| draw_glyph(rt, hi as f32))?,
+        Some(n) => r.render_alpha(hi, |rt| draw_digit(r, rt, hi as f32, n))?,
     };
 
-    let small = downsample(&combine(&glyph, &hole, &digit), SS);
+    let small = downsample(&coverage, SS);
     // White on dark taskbars, near-black on light ones.
     let rgb = if dark_taskbar { (255, 255, 255) } else { (0x19, 0x19, 0x19) };
     bgra_to_hicon(&to_premultiplied_bgra(&small, rgb), size)
@@ -99,20 +106,9 @@ fn draw_glyph(rt: &ID2D1RenderTarget, size: f32) -> Result<()> {
     }
 }
 
-fn badge_rect(size: f32) -> D2D_RECT_F {
-    let c = size * BADGE_CENTER;
-    let rad = size * BADGE_RADIUS;
-    D2D_RECT_F { left: c - rad, top: c - rad, right: c + rad, bottom: c + rad }
-}
-
-fn draw_hole(rt: &ID2D1RenderTarget, size: f32) -> Result<()> {
-    unsafe {
-        let rad = size * BADGE_RADIUS;
-        let rr = D2D1_ROUNDED_RECT { rect: badge_rect(size), radiusX: rad, radiusY: rad };
-        let brush = rt.CreateSolidColorBrush(&WHITE, None)?;
-        rt.FillRoundedRectangle(&rr, &brush);
-        Ok(())
-    }
+/// The digit is drawn into the whole icon box, not a badge corner.
+fn digit_rect(size: f32) -> D2D_RECT_F {
+    D2D_RECT_F { left: 0.0, top: 0.0, right: size, bottom: size }
 }
 
 fn draw_digit(r: &Renderer, rt: &ID2D1RenderTarget, size: f32, n: u8) -> Result<()> {
@@ -122,7 +118,9 @@ fn draw_digit(r: &Renderer, rt: &ID2D1RenderTarget, size: f32, n: u8) -> Result<
         let format = r.dwrite().CreateTextFormat(
             PCWSTR(family.as_ptr()),
             None,
-            DWRITE_FONT_WEIGHT_SEMI_BOLD,
+            // Bold rather than semibold: at 16 physical pixels the extra
+            // stroke weight is the difference between legible and grey.
+            DWRITE_FONT_WEIGHT_BOLD,
             DWRITE_FONT_STYLE_NORMAL,
             DWRITE_FONT_STRETCH_NORMAL,
             size * DIGIT_HEIGHT,
@@ -136,7 +134,7 @@ fn draw_digit(r: &Renderer, rt: &ID2D1RenderTarget, size: f32, n: u8) -> Result<
         rt.DrawText(
             &text,
             &format,
-            &badge_rect(size),
+            &digit_rect(size),
             &brush,
             Default::default(),
             Default::default(),

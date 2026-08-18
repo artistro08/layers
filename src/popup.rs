@@ -11,11 +11,17 @@ use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 pub const QUIT_CLICKED: u32 = WM_APP + 4;
 
 /// Logical layout in pixels at 96 dpi.
-pub const WIDTH: f32 = 248.0;
-pub const ROW_HEIGHT: f32 = 40.0;
-pub const PADDING: f32 = 8.0;
+pub const WIDTH: f32 = 220.0;
+pub const ROW_HEIGHT: f32 = 32.0;
+pub const PADDING: f32 = 6.0;
 pub const CORNER: f32 = 8.0;
-pub const HEIGHT: f32 = PADDING * 2.0 + ROW_HEIGHT * 3.0;
+/// Height of the rule between the Layer and Quit rows: 3px gap, 1px rule,
+/// 3px gap.
+pub const SEPARATOR_H: f32 = 7.0;
+/// Transparent bleed around the panel that the drop shadow is drawn into.
+/// The bitmap and window are the panel plus this margin on all sides.
+pub const SHADOW_MARGIN: f32 = 16.0;
+pub const HEIGHT: f32 = PADDING * 2.0 + ROW_HEIGHT * 3.0 + SEPARATOR_H;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Row {
@@ -24,29 +30,47 @@ pub enum Row {
     Quit,
 }
 
-/// Which row contains a y coordinate, in client pixels at 96 dpi.
+/// Which row contains a y coordinate, in bitmap-space client pixels at 96
+/// dpi (i.e. including the shadow margin, as the window's own client area
+/// does).
 pub fn row_at(y: f32) -> Option<Row> {
+    let y = y - SHADOW_MARGIN;
     if y < PADDING {
         return None;
     }
-    match ((y - PADDING) / ROW_HEIGHT).floor() as i32 {
-        0 => Some(Row::Status),
-        1 => Some(Row::Layer),
-        2 => Some(Row::Quit),
-        _ => None,
+    let rel = y - PADDING;
+    if rel < ROW_HEIGHT {
+        return Some(Row::Status);
     }
+    if rel < ROW_HEIGHT * 2.0 {
+        return Some(Row::Layer);
+    }
+    let quit_start = ROW_HEIGHT * 2.0 + SEPARATOR_H;
+    if rel >= quit_start && rel < quit_start + ROW_HEIGHT {
+        return Some(Row::Quit);
+    }
+    None
 }
 
 /// Clamps the popup into the work area so it never hangs off screen or under
 /// the taskbar. Prefers opening above the cursor, as a taskbar flyout does.
-pub fn place(cursor: POINT, work: RECT, w: i32, h: i32) -> POINT {
-    let x = (cursor.x - w / 2).clamp(work.left, (work.right - w).max(work.left));
-    let y = if cursor.y - h - 12 >= work.top {
-        cursor.y - h - 12
+///
+/// `w`/`h` are the bitmap's (shadow-inclusive) dimensions in physical
+/// pixels; `scale` converts `SHADOW_MARGIN` into that same space. The
+/// clamping itself works in the visible panel's dimensions, then the
+/// returned point is shifted back to the bitmap's top-left so the panel —
+/// not the transparent bleed around it — lands where the math says.
+pub fn place(cursor: POINT, work: RECT, w: i32, h: i32, scale: f32) -> POINT {
+    let margin = (SHADOW_MARGIN * scale).round() as i32;
+    let panel_w = w - margin * 2;
+    let panel_h = h - margin * 2;
+    let x = (cursor.x - panel_w / 2).clamp(work.left, (work.right - panel_w).max(work.left));
+    let y = if cursor.y - panel_h - 12 >= work.top {
+        cursor.y - panel_h - 12
     } else {
-        (cursor.y + 12).min((work.bottom - h).max(work.top))
+        (cursor.y + 12).min((work.bottom - panel_h).max(work.top))
     };
-    POINT { x, y }
+    POINT { x: x - margin, y: y - margin }
 }
 
 #[cfg(test)]
@@ -57,57 +81,95 @@ mod tests {
         RECT { left: 0, top: 0, right: 1920, bottom: 1040 }
     }
 
+    // Bitmap dimensions at scale 1.0: panel plus shadow margin on all sides.
+    fn bitmap_wh() -> (i32, i32) {
+        (
+            (WIDTH + SHADOW_MARGIN * 2.0) as i32,
+            (HEIGHT + SHADOW_MARGIN * 2.0) as i32,
+        )
+    }
+
     #[test]
     fn hit_testing_maps_each_row_band() {
-        assert_eq!(row_at(PADDING + 1.0), Some(Row::Status));
-        assert_eq!(row_at(PADDING + ROW_HEIGHT + 1.0), Some(Row::Layer));
-        assert_eq!(row_at(PADDING + ROW_HEIGHT * 2.0 + 1.0), Some(Row::Quit));
+        assert_eq!(row_at(SHADOW_MARGIN + PADDING + 1.0), Some(Row::Status));
+        assert_eq!(
+            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT + 1.0),
+            Some(Row::Layer)
+        );
+        assert_eq!(
+            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H + 1.0),
+            Some(Row::Quit)
+        );
+    }
+
+    #[test]
+    fn hit_testing_rejects_the_shadow_margin_above_the_panel() {
+        assert_eq!(row_at(SHADOW_MARGIN - 1.0), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_above_the_first_row() {
-        assert_eq!(row_at(PADDING - 1.0), None);
+        assert_eq!(row_at(SHADOW_MARGIN + PADDING - 1.0), None);
+    }
+
+    #[test]
+    fn hit_testing_rejects_the_separator_gap_between_layer_and_quit() {
+        let gap_mid = SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H / 2.0;
+        assert_eq!(row_at(gap_mid), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_below_the_last_row() {
-        assert_eq!(row_at(PADDING + ROW_HEIGHT * 3.0 + 1.0), None);
+        assert_eq!(
+            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 3.0 + SEPARATOR_H + 1.0),
+            None
+        );
     }
 
     #[test]
     fn the_popup_opens_above_the_cursor_when_there_is_room() {
-        let p = place(POINT { x: 960, y: 1000 }, work(), 248, 136);
-        assert!(p.y < 1000 - 136);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 960, y: 1000 }, work(), w, h, 1.0);
+        // The panel's bottom edge (bitmap y + margin + panel height) must
+        // clear the cursor by the 12px gap.
+        assert!(p.y + SHADOW_MARGIN as i32 + (HEIGHT as i32) <= 1000 - 12);
     }
 
     #[test]
     fn the_popup_drops_below_the_cursor_when_there_is_no_room_above() {
-        let p = place(POINT { x: 960, y: 5 }, work(), 248, 136);
-        assert!(p.y > 5);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 960, y: 5 }, work(), w, h, 1.0);
+        // The panel's top edge (bitmap y + margin) must sit below the cursor.
+        assert!(p.y + SHADOW_MARGIN as i32 > 5);
     }
 
     #[test]
     fn the_popup_never_hangs_off_the_right_edge() {
-        let p = place(POINT { x: 1918, y: 1000 }, work(), 248, 136);
-        assert_eq!(p.x, 1920 - 248);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 1918, y: 1000 }, work(), w, h, 1.0);
+        // Panel right edge (bitmap x + margin + panel width) sits exactly at
+        // the work area's right edge.
+        assert_eq!(p.x + SHADOW_MARGIN as i32 + WIDTH as i32, 1920);
     }
 
     #[test]
     fn the_popup_never_hangs_off_the_left_edge() {
-        let p = place(POINT { x: 2, y: 1000 }, work(), 248, 136);
-        assert_eq!(p.x, 0);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 2, y: 1000 }, work(), w, h, 1.0);
+        assert_eq!(p.x + SHADOW_MARGIN as i32, 0);
     }
 
     #[test]
     fn the_popup_stays_inside_a_work_area_that_does_not_start_at_the_origin() {
-        let w = RECT { left: 1920, top: 0, right: 3840, bottom: 1040 };
-        let p = place(POINT { x: 1921, y: 1000 }, w, 248, 136);
-        assert_eq!(p.x, 1920);
+        let (w, h) = bitmap_wh();
+        let work = RECT { left: 1920, top: 0, right: 3840, bottom: 1040 };
+        let p = place(POINT { x: 1921, y: 1000 }, work, w, h, 1.0);
+        assert_eq!(p.x + SHADOW_MARGIN as i32, 1920);
     }
 
     #[test]
-    fn the_three_rows_plus_padding_account_for_the_full_height() {
-        assert_eq!(HEIGHT, PADDING * 2.0 + ROW_HEIGHT * 3.0);
+    fn the_three_rows_plus_padding_and_separator_account_for_the_full_height() {
+        assert_eq!(HEIGHT, PADDING * 2.0 + ROW_HEIGHT * 3.0 + SEPARATOR_H);
     }
 
     /// `row_rect` (painted geometry) and `row_at` (hit testing) each encode
@@ -153,6 +215,12 @@ pub fn border(dark: bool) -> D2D1_COLOR_F {
     D2D1_COLOR_F { r: v, g: v, b: v, a: 0.12 }
 }
 
+/// The rule between grouped rows.
+pub fn separator(dark: bool) -> D2D1_COLOR_F {
+    let v = if dark { 1.0 } else { 0.0 };
+    D2D1_COLOR_F { r: v, g: v, b: v, a: 0.10 }
+}
+
 /// Status dot color: green connected, amber no slot, red disconnected.
 pub fn status_dot(status: crate::device::Status) -> D2D1_COLOR_F {
     match status {
@@ -190,12 +258,17 @@ pub fn status_detail(status: crate::device::Status) -> Option<&'static str> {
 }
 
 use crate::device;
+use crate::icon;
 use crate::render::Renderer;
 use crate::theme;
 use std::cell::RefCell;
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, SIZE, WPARAM};
-use windows::Win32::Graphics::Direct2D::Common::{D2D1_COLOR_F as Color, D2D_RECT_F};
+use crate::geometry::Segment;
+use windows::Win32::Graphics::Direct2D::Common::{
+    D2D1_BEZIER_SEGMENT, D2D1_COLOR_F as Color, D2D1_FIGURE_BEGIN_FILLED,
+    D2D1_FIGURE_END_CLOSED, D2D1_FILL_MODE_WINDING, D2D_RECT_F,
+};
 use windows::Win32::Graphics::Direct2D::{
     ID2D1Brush, ID2D1RenderTarget, D2D1_ELLIPSE, D2D1_ROUNDED_RECT,
 };
@@ -203,7 +276,7 @@ use windows::Win32::Graphics::DirectWrite::{
     IDWriteTextFormat, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
-    DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_TEXT_ALIGNMENT_TRAILING,
+    DWRITE_TEXT_ALIGNMENT_LEADING,
 };
 use windows::Win32::Graphics::Gdi::{
     CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetMonitorInfoW,
@@ -231,8 +304,12 @@ const LOCALE: PCWSTR = w!("en-us");
 
 /// Row interior metrics, in logical pixels at 96 dpi.
 const DOT: f32 = 8.0;
-/// Left inset of every row's text, clearing the status dot.
-const TEXT_LEFT: f32 = 28.0;
+/// Left inset of the icon column.
+const ICON_LEFT: f32 = 12.0;
+/// Side length of the icon column's square.
+const ICON_SIZE: f32 = 16.0;
+/// Left inset of every row's text, clearing the icon column.
+const TEXT_LEFT: f32 = 44.0;
 /// Right inset of the layer pill.
 const TEXT_RIGHT: f32 = 16.0;
 const PILL_W: f32 = 28.0;
@@ -354,7 +431,7 @@ impl Popup {
             let (w, h) = (frames[0].1, frames[0].2);
             let pos = match open {
                 Some((pos, _, _)) => pos,
-                None => place(cursor, work, w, h),
+                None => place(cursor, work, w, h, scale),
             };
 
             // The borrow ends before ShowWindow/SetForegroundWindow, which
@@ -435,8 +512,8 @@ fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
             WS_POPUP,
             0,
             0,
-            (WIDTH * scale) as i32,
-            (HEIGHT * scale) as i32,
+            ((WIDTH + SHADOW_MARGIN * 2.0) * scale) as i32,
+            ((HEIGHT + SHADOW_MARGIN * 2.0) * scale) as i32,
             Some(owner),
             None,
             Some(instance),
@@ -468,8 +545,15 @@ fn dismiss(hwnd: HWND) {
 
 fn row_rect(row: Row, scale: f32) -> D2D_RECT_F {
     let index = frame_index(Some(row)) as f32 - 1.0;
-    let top = (PADDING + index * ROW_HEIGHT) * scale;
-    D2D_RECT_F { left: 0.0, top, right: WIDTH * scale, bottom: top + ROW_HEIGHT * scale }
+    // Quit sits below the separator between it and Layer.
+    let extra = if row == Row::Quit { SEPARATOR_H } else { 0.0 };
+    let top = (SHADOW_MARGIN + PADDING + index * ROW_HEIGHT + extra) * scale;
+    D2D_RECT_F {
+        left: SHADOW_MARGIN * scale,
+        top,
+        right: (SHADOW_MARGIN + WIDTH) * scale,
+        bottom: top + ROW_HEIGHT * scale,
+    }
 }
 
 fn inset(r: D2D_RECT_F, by: f32) -> D2D_RECT_F {
@@ -479,6 +563,98 @@ fn inset(r: D2D_RECT_F, by: f32) -> D2D_RECT_F {
         right: r.right - by,
         bottom: r.bottom - by,
     }
+}
+
+/// The icon column's square within a row, vertically centred.
+fn icon_rect(row: D2D_RECT_F, scale: f32) -> D2D_RECT_F {
+    let middle = (row.top + row.bottom) / 2.0;
+    let left = row.left + ICON_LEFT * scale;
+    D2D_RECT_F {
+        left,
+        top: middle - ICON_SIZE / 2.0 * scale,
+        right: left + ICON_SIZE * scale,
+        bottom: middle + ICON_SIZE / 2.0 * scale,
+    }
+}
+
+/// Builds and fills a path geometry for a vendored glyph, scaled from its
+/// authored view box to `dest`. Mirrors `icon.rs::draw_glyph`, generalized
+/// to an arbitrary destination rect instead of a fixed origin box.
+fn draw_icon(
+    rt: &ID2D1RenderTarget,
+    path: &str,
+    viewbox: f32,
+    dest: D2D_RECT_F,
+    brush: &ID2D1Brush,
+) -> Result<()> {
+    unsafe {
+        let factory = rt.GetFactory()?;
+        let geo = factory.CreatePathGeometry()?;
+        let sink = geo.Open()?;
+        sink.SetFillMode(D2D1_FILL_MODE_WINDING);
+
+        let scale = (dest.right - dest.left) / viewbox;
+        let pt = |p: crate::geometry::Point| Vector2 {
+            X: dest.left + p.x * scale,
+            Y: dest.top + p.y * scale,
+        };
+
+        // The path is a compile-time constant already covered by
+        // geometry.rs's own parse tests, so a failure here is a build-time
+        // mistake, not runtime input.
+        let figures = crate::geometry::parse_path(path).expect("vendored glyph is valid");
+        for f in figures {
+            sink.BeginFigure(pt(f.start), D2D1_FIGURE_BEGIN_FILLED);
+            for s in f.segments {
+                match s {
+                    Segment::Line(a) => sink.AddLine(pt(a)),
+                    Segment::Cubic(a, b, c) => sink.AddBezier(&D2D1_BEZIER_SEGMENT {
+                        point1: pt(a),
+                        point2: pt(b),
+                        point3: pt(c),
+                    }),
+                }
+            }
+            sink.EndFigure(D2D1_FIGURE_END_CLOSED);
+        }
+        sink.Close()?;
+
+        rt.FillGeometry(&geo, brush, None);
+        Ok(())
+    }
+}
+
+/// Approximates a soft drop shadow with concentric rounded rects of ramping
+/// alpha, since this app has no D3D11 device to run a real D2D blur effect
+/// through. Offset down slightly for a light-from-above look. Drawn before
+/// the panel so the panel's own fill covers the inner steps.
+fn draw_shadow(rt: &ID2D1RenderTarget, w: f32, h: f32, s: f32) -> Result<()> {
+    const STEPS: i32 = 12;
+    let offset_y = 2.0 * s;
+    for i in 0..STEPS {
+        let inset_amt = i as f32 * SHADOW_MARGIN * s / STEPS as f32;
+        let remaining = SHADOW_MARGIN * s - inset_amt;
+        let rect = D2D_RECT_F {
+            left: inset_amt,
+            top: inset_amt + offset_y,
+            right: w - inset_amt,
+            bottom: h - inset_amt + offset_y,
+        };
+        let t = i as f32 / (STEPS - 1) as f32;
+        let color = D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.06 * t * t };
+        unsafe {
+            let brush = rt.CreateSolidColorBrush(&color, None)?;
+            rt.FillRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect,
+                    radiusX: CORNER * s + remaining,
+                    radiusY: CORNER * s + remaining,
+                },
+                &brush,
+            );
+        }
+    }
+    Ok(())
 }
 
 fn format(
@@ -524,17 +700,25 @@ fn paint(
     hovered: Option<Row>,
     scale: f32,
 ) -> Result<(Vec<u8>, i32, i32)> {
-    let w = (WIDTH * scale).round() as i32;
-    let h = (HEIGHT * scale).round() as i32;
+    let w = ((WIDTH + SHADOW_MARGIN * 2.0) * scale).round() as i32;
+    let h = ((HEIGHT + SHADOW_MARGIN * 2.0) * scale).round() as i32;
     let dark = theme::dark_apps();
     let s = scale;
 
     let bgra = r.render_bgra(w as u32, h as u32, |rt| unsafe {
+        draw_shadow(rt, w as f32, h as f32, s)?;
+
         // Surface and border. Half a stroke of inset keeps the border inside
-        // the bitmap instead of half-clipped by its edge.
+        // the panel's own edge instead of half-clipped by it. The panel
+        // itself is inset from the bitmap edge by the shadow margin.
         let panel = D2D1_ROUNDED_RECT {
             rect: inset(
-                D2D_RECT_F { left: 0.0, top: 0.0, right: w as f32, bottom: h as f32 },
+                D2D_RECT_F {
+                    left: SHADOW_MARGIN * s,
+                    top: SHADOW_MARGIN * s,
+                    right: w as f32 - SHADOW_MARGIN * s,
+                    bottom: h as f32 - SHADOW_MARGIN * s,
+                },
                 s / 2.0,
             ),
             radiusX: CORNER * s,
@@ -563,14 +747,13 @@ fn paint(
         let dot = rt.CreateSolidColorBrush(&status_dot(state.status), None)?;
         rt.FillEllipse(
             &D2D1_ELLIPSE {
-                point: Vector2 { X: PADDING * 2.0 * s, Y: middle },
+                point: Vector2 { X: row.left + (ICON_LEFT + ICON_SIZE / 2.0) * s, Y: middle },
                 radiusX: DOT / 2.0 * s,
                 radiusY: DOT / 2.0 * s,
             },
             &dot,
         );
-        let body =
-            D2D_RECT_F { left: TEXT_LEFT * s, right: (WIDTH - TEXT_RIGHT) * s, ..row };
+        let body = D2D_RECT_F { left: row.left + TEXT_LEFT * s, right: row.right - TEXT_RIGHT * s, ..row };
         match status_detail(state.status) {
             None => {
                 let f =
@@ -599,14 +782,21 @@ fn paint(
         // Layer row.
         let row = row_rect(Row::Layer, s);
         let middle = (row.top + row.bottom) / 2.0;
+        draw_icon(
+            rt,
+            icon::GLYPH_PATH,
+            icon::GLYPH_VIEWBOX,
+            icon_rect(row, s),
+            &ink,
+        )?;
         let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
         draw_text(
             rt,
             &state.layers.label(),
             &f,
             D2D_RECT_F {
-                left: TEXT_LEFT * s,
-                right: (WIDTH - TEXT_RIGHT - PILL_W - PADDING) * s,
+                left: row.left + TEXT_LEFT * s,
+                right: row.right - (TEXT_RIGHT + PILL_W + PADDING) * s,
                 ..row
             },
             &ink,
@@ -617,71 +807,67 @@ fn paint(
             | device::Status::NoSlot
             | device::Status::VersionMismatch => None,
         };
-        match badge {
-            Some(n) => {
-                let pill = D2D_RECT_F {
-                    left: (WIDTH - TEXT_RIGHT - PILL_W) * s,
-                    right: (WIDTH - TEXT_RIGHT) * s,
-                    top: middle - PILL_H / 2.0 * s,
-                    bottom: middle + PILL_H / 2.0 * s,
-                };
-                let (ar, ag, ab) = theme::accent();
-                let accent = Color {
-                    r: ar as f32 / 255.0,
-                    g: ag as f32 / 255.0,
-                    b: ab as f32 / 255.0,
-                    a: 1.0,
-                };
-                let brush = rt.CreateSolidColorBrush(&accent, None)?;
-                rt.FillRoundedRectangle(
-                    &D2D1_ROUNDED_RECT {
-                        rect: pill,
-                        radiusX: PILL_H / 2.0 * s,
-                        radiusY: PILL_H / 2.0 * s,
-                    },
-                    &brush,
-                );
-                let white = rt.CreateSolidColorBrush(&WHITE, None)?;
-                let f = format(
-                    r,
-                    12.0 * s,
-                    DWRITE_FONT_WEIGHT_SEMI_BOLD,
-                    DWRITE_TEXT_ALIGNMENT_CENTER,
-                )?;
-                draw_text(rt, &n.to_string(), &f, pill, &white);
-            }
-            None => {
-                let mut faint = text(dark);
-                faint.a *= 0.4;
-                let brush = rt.CreateSolidColorBrush(&faint, None)?;
-                let f = format(
-                    r,
-                    14.0 * s,
-                    DWRITE_FONT_WEIGHT_NORMAL,
-                    DWRITE_TEXT_ALIGNMENT_TRAILING,
-                )?;
-                draw_text(
-                    rt,
-                    "\u{2014}",
-                    &f,
-                    D2D_RECT_F {
-                        left: TEXT_LEFT * s,
-                        right: (WIDTH - TEXT_RIGHT) * s,
-                        ..row
-                    },
-                    &brush,
-                );
-            }
+        // A layer above 0 gets the accent pill with its digit. Anything
+        // else — disconnected, no slot, or plain layer 0 — draws nothing on
+        // the right, rather than a placeholder that looks like a missing
+        // keyboard accelerator.
+        if let Some(n) = badge {
+            let pill = D2D_RECT_F {
+                left: row.right - (TEXT_RIGHT + PILL_W) * s,
+                right: row.right - TEXT_RIGHT * s,
+                top: middle - PILL_H / 2.0 * s,
+                bottom: middle + PILL_H / 2.0 * s,
+            };
+            let (ar, ag, ab) = theme::accent();
+            let accent = Color {
+                r: ar as f32 / 255.0,
+                g: ag as f32 / 255.0,
+                b: ab as f32 / 255.0,
+                a: 1.0,
+            };
+            let brush = rt.CreateSolidColorBrush(&accent, None)?;
+            rt.FillRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect: pill,
+                    radiusX: PILL_H / 2.0 * s,
+                    radiusY: PILL_H / 2.0 * s,
+                },
+                &brush,
+            );
+            let white = rt.CreateSolidColorBrush(&WHITE, None)?;
+            let f = format(
+                r,
+                12.0 * s,
+                DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                DWRITE_TEXT_ALIGNMENT_CENTER,
+            )?;
+            draw_text(rt, &n.to_string(), &f, pill, &white);
         }
+
+        // Separator between the Layer and Quit rows.
+        let sep_y = row.bottom + SEPARATOR_H / 2.0 * s;
+        let sep_brush = rt.CreateSolidColorBrush(&separator(dark), None)?;
+        rt.DrawLine(
+            Vector2 { X: row.left + TEXT_LEFT * s, Y: sep_y },
+            Vector2 { X: row.right - TEXT_RIGHT * s, Y: sep_y },
+            &sep_brush,
+            s,
+            None,
+        );
 
         // Quit row.
         let row = row_rect(Row::Quit, s);
+        draw_icon(rt, icon::POWER_PATH, icon::POWER_VIEWBOX, icon_rect(row, s), &ink)?;
         let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
         draw_text(
             rt,
             "Quit",
             &f,
-            D2D_RECT_F { left: TEXT_LEFT * s, right: (WIDTH - TEXT_RIGHT) * s, ..row },
+            D2D_RECT_F {
+                left: row.left + TEXT_LEFT * s,
+                right: row.right - TEXT_RIGHT * s,
+                ..row
+            },
             &ink,
         );
         Ok(())

@@ -1,8 +1,8 @@
 //! Minimal SVG path parser.
 //!
-//! Handles exactly the subset the vendored Fluent glyph uses: absolute
-//! `M`, `L`, `C`, `Z`. Anything else is rejected. A loud error beats a
-//! silently misdrawn icon.
+//! Handles exactly the subset the vendored Fluent glyphs use: absolute
+//! `M`, `L`, `C`, `Z`, `V`, `H`. Anything else is rejected. A loud error
+//! beats a silently misdrawn icon.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
@@ -66,6 +66,17 @@ fn tokenize(d: &str) -> Result<Vec<(Option<char>, Vec<f32>)>, String> {
     Ok(tokens)
 }
 
+/// The point a `V`/`H` (or a relative command, were one supported) would
+/// continue from: the figure's start until a segment is appended, then that
+/// segment's endpoint.
+fn current_point(f: &Figure) -> Point {
+    match f.segments.last() {
+        None => f.start,
+        Some(Segment::Line(p)) => *p,
+        Some(Segment::Cubic(_, _, p)) => *p,
+    }
+}
+
 pub fn parse_path(d: &str) -> Result<Vec<Figure>, String> {
     let mut figures: Vec<Figure> = Vec::new();
     let mut current: Option<Figure> = None;
@@ -117,6 +128,26 @@ pub fn parse_path(d: &str) -> Result<Vec<Figure>, String> {
                         Point { x: g[2], y: g[3] },
                         Point { x: g[4], y: g[5] },
                     ));
+                }
+            }
+            'V' => {
+                let f = current.as_mut().ok_or("V before M")?;
+                if nums.is_empty() {
+                    return Err("V needs at least one coordinate".into());
+                }
+                for &y in &nums {
+                    let x = current_point(f).x;
+                    f.segments.push(Segment::Line(Point { x, y }));
+                }
+            }
+            'H' => {
+                let f = current.as_mut().ok_or("H before M")?;
+                if nums.is_empty() {
+                    return Err("H needs at least one coordinate".into());
+                }
+                for &x in &nums {
+                    let y = current_point(f).y;
+                    f.segments.push(Segment::Line(Point { x, y }));
                 }
             }
             'Z' => {
@@ -200,6 +231,35 @@ mod tests {
     }
 
     #[test]
+    fn v_appends_absolute_vertical_linetos_reusing_the_current_x() {
+        let f = parse_path("M1 2V5 8Z").unwrap();
+        assert_eq!(
+            f[0].segments,
+            vec![Segment::Line(p(1.0, 5.0)), Segment::Line(p(1.0, 8.0))]
+        );
+    }
+
+    #[test]
+    fn h_appends_absolute_horizontal_linetos_reusing_the_current_y() {
+        let f = parse_path("M1 2H5 8Z").unwrap();
+        assert_eq!(
+            f[0].segments,
+            vec![Segment::Line(p(5.0, 2.0)), Segment::Line(p(8.0, 2.0))]
+        );
+    }
+
+    #[test]
+    fn v_before_any_m_errors() {
+        assert!(parse_path("V5Z").is_err());
+    }
+
+    #[test]
+    fn rejects_lowercase_v_and_h() {
+        assert!(parse_path("M0 0v5Z").is_err());
+        assert!(parse_path("M0 0h5Z").is_err());
+    }
+
+    #[test]
     fn rejects_commands_outside_the_supported_subset() {
         assert!(parse_path("M0 0A1 1 0 0 1 2 2Z").is_err());
     }
@@ -235,6 +295,33 @@ mod tests {
                 assert!(
                     (0.0..=crate::icon::GLYPH_VIEWBOX).contains(&pt.x)
                         && (0.0..=crate::icon::GLYPH_VIEWBOX).contains(&pt.y),
+                    "point {pt:?} escapes the view box"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_vendored_power_glyph_parses_without_error() {
+        let figures = parse_path(crate::icon::POWER_PATH).unwrap();
+        assert!(!figures.is_empty());
+        assert!(figures.iter().all(|f| !f.segments.is_empty()));
+    }
+
+    #[test]
+    fn the_vendored_power_glyph_stays_inside_its_view_box() {
+        for f in parse_path(crate::icon::POWER_PATH).unwrap() {
+            let mut pts = vec![f.start];
+            for s in &f.segments {
+                match s {
+                    Segment::Line(a) => pts.push(*a),
+                    Segment::Cubic(a, b, c) => pts.extend([*a, *b, *c]),
+                }
+            }
+            for pt in pts {
+                assert!(
+                    (0.0..=crate::icon::POWER_VIEWBOX).contains(&pt.x)
+                        && (0.0..=crate::icon::POWER_VIEWBOX).contains(&pt.y),
                     "point {pt:?} escapes the view box"
                 );
             }
