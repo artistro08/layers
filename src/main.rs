@@ -1,7 +1,7 @@
 // No console window.
 #![windows_subsystem = "windows"]
 
-use layers::{device, icon, popup, protocol, render, theme, tray};
+use layers::{device, hud, icon, popup, protocol, render, theme, tray};
 use std::cell::{Cell, RefCell};
 use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
@@ -20,6 +20,7 @@ struct App {
     renderer: render::Renderer,
     tray: tray::Tray,
     popup: popup::Popup,
+    hud: hud::Hud,
     state: device::State,
     device: Option<device::Handle>,
 }
@@ -107,6 +108,7 @@ fn run() -> Result<()> {
                 renderer: render::Renderer::new()?,
                 tray: tray::Tray::new(hwnd)?,
                 popup: popup::Popup::new(hwnd)?,
+                hud: hud::Hud::new(instance.into())?,
                 state: device::State {
                     status: device::Status::Disconnected,
                     layers: protocol::Layers(1),
@@ -197,13 +199,28 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
 
     match msg {
         tray::WM_DEVICE => {
+            let mut fire_hud = false;
+            let mut new_layers = protocol::Layers(0);
             APP.with(|a| {
                 if let Some(app) = a.borrow_mut().as_mut() {
                     let packed = wp.0;
-                    app.state.layers = protocol::Layers((packed & 0xFF) as u8);
-                    app.state.status =
-                        device::Status::try_from(((packed >> 8) & 0xFF) as u8)
-                            .unwrap_or(device::Status::Disconnected);
+                    let layers = protocol::Layers((packed & 0xFF) as u8);
+                    let status = device::Status::try_from(((packed >> 8) & 0xFF) as u8)
+                        .unwrap_or(device::Status::Disconnected);
+
+                    let prev_layers = app.state.layers;
+                    let prev_status = app.state.status;
+
+                    app.state.layers = layers;
+                    app.state.status = status;
+
+                    // Fires only on an actual layer change while already
+                    // connected, not on the Layer-0 state a fresh connect or
+                    // reconnect legitimately starts from.
+                    fire_hud = layers != prev_layers
+                        && status == device::Status::Connected
+                        && prev_status == device::Status::Connected;
+                    new_layers = layers;
                 }
             });
             refresh(hwnd);
@@ -216,6 +233,13 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                     }
                 }
             });
+            if fire_hud {
+                APP.with(|a| {
+                    if let Some(app) = a.borrow_mut().as_mut() {
+                        let _ = app.hud.show(&app.renderer, new_layers);
+                    }
+                });
+            }
             LRESULT(0)
         }
         tray::WM_TRAY => {

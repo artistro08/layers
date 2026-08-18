@@ -567,7 +567,7 @@ fn row_rect(row: Row, scale: f32) -> D2D_RECT_F {
     }
 }
 
-fn inset(r: D2D_RECT_F, by: f32) -> D2D_RECT_F {
+pub(crate) fn inset(r: D2D_RECT_F, by: f32) -> D2D_RECT_F {
     inset_xy(r, by, by)
 }
 
@@ -602,7 +602,7 @@ fn icon_rect_sized(row: D2D_RECT_F, scale: f32, size: f32) -> D2D_RECT_F {
 /// Builds and fills a path geometry for a vendored glyph, scaled from its
 /// authored view box to `dest`. Mirrors `icon.rs::draw_glyph`, generalized
 /// to an arbitrary destination rect instead of a fixed origin box.
-fn draw_icon(
+pub(crate) fn draw_icon(
     rt: &ID2D1RenderTarget,
     path: &str,
     viewbox: f32,
@@ -679,7 +679,7 @@ fn draw_shadow(rt: &ID2D1RenderTarget, w: f32, h: f32, s: f32) -> Result<()> {
     Ok(())
 }
 
-fn format(
+pub(crate) fn format(
     r: &Renderer,
     size: f32,
     weight: DWRITE_FONT_WEIGHT,
@@ -701,7 +701,7 @@ fn format(
     }
 }
 
-fn draw_text(
+pub(crate) fn draw_text(
     rt: &ID2D1RenderTarget,
     s: &str,
     f: &IDWriteTextFormat,

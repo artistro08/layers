@@ -1,4 +1,5 @@
 pub mod geometry;
+pub mod hud;
 pub mod icon;
 pub mod popup;
 pub mod protocol;
