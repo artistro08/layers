@@ -120,6 +120,14 @@ pub fn place(cursor: POINT, work: RECT, w: i32, h: i32, scale: f32) -> POINT {
     POINT { x: x - margin, y: y - margin }
 }
 
+/// Whether `pt` (screen coordinates) falls inside `r`. Right/bottom are
+/// exclusive, matching Win32's own `RECT` convention. Used to decide whether
+/// a mouse message the popup received only because it holds capture (see
+/// `captured_screen_point`) actually landed on the submenu instead.
+pub(crate) fn point_in_rect(pt: POINT, r: RECT) -> bool {
+    pt.x >= r.left && pt.x < r.right && pt.y >= r.top && pt.y < r.bottom
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,6 +244,17 @@ mod tests {
         assert_eq!(panel_height(&list), PADDING * 2.0 + ROW_HEIGHT * 4.0 + SEPARATOR_H * 2.0);
     }
 
+    #[test]
+    fn point_in_rect_is_inclusive_of_the_top_left_and_exclusive_of_the_bottom_right() {
+        let r = RECT { left: 10, top: 20, right: 30, bottom: 40 };
+        assert!(point_in_rect(POINT { x: 10, y: 20 }, r), "top-left corner is inside");
+        assert!(point_in_rect(POINT { x: 20, y: 30 }, r), "interior point is inside");
+        assert!(!point_in_rect(POINT { x: 30, y: 30 }, r), "right edge is outside");
+        assert!(!point_in_rect(POINT { x: 20, y: 40 }, r), "bottom edge is outside");
+        assert!(!point_in_rect(POINT { x: 9, y: 20 }, r), "left of the rect is outside");
+        assert!(!point_in_rect(POINT { x: 10, y: 19 }, r), "above the rect is outside");
+    }
+
     /// `row_rect` (painted geometry) and `item_at` (hit testing) each encode
     /// the item order independently. This round trip is the guard against
     /// them silently disagreeing.
@@ -330,6 +349,7 @@ use crate::device;
 use crate::geometry::Segment;
 use crate::icon;
 use crate::render::Renderer;
+use crate::submenu;
 use crate::theme;
 use std::cell::RefCell;
 use windows::core::{w, Result, PCWSTR};
@@ -359,9 +379,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetCursorPos, KillTimer, LoadCursorW, PostMessageW,
-    RegisterClassW, SetForegroundWindow, SetTimer, ShowWindow, UpdateLayeredWindow, IDC_ARROW,
-    SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS,
+    CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowRect, KillTimer, LoadCursorW,
+    PostMessageW, RegisterClassW, SetForegroundWindow, SetTimer, ShowWindow, UpdateLayeredWindow,
+    IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
@@ -1155,6 +1175,30 @@ pub(crate) fn push(hwnd: HWND, bgra: &[u8], w: i32, h: i32, pos: POINT) -> Resul
     }
 }
 
+/// Screen coordinates of a captured mouse message's point, or `None` when
+/// the popup does not currently hold capture. Only meaningful while
+/// captured: that is the only situation where a mouse message can arrive
+/// here for a point that is not actually over the popup (see the fallback
+/// in `show()`), so it is also the only situation where routing to the
+/// submenu is ever needed.
+///
+/// `lParam`'s x/y are relative to the *capturing* window, not whichever
+/// window is physically under the pointer, so this adds the popup's own
+/// `GetWindowRect` origin rather than using `ClientToScreen` — the latter
+/// would be wrong for a captured message whose point may lie outside the
+/// client area.
+fn captured_screen_point(hwnd: HWND, x: f32, y: f32) -> Option<POINT> {
+    let captured = POPUP.with(|p| {
+        p.try_borrow().ok().and_then(|b| b.as_ref().map(|i| i.captured)).unwrap_or(false)
+    });
+    if !captured {
+        return None;
+    }
+    let mut wr = RECT::default();
+    unsafe { GetWindowRect(hwnd, &mut wr) }.ok()?;
+    Some(POINT { x: wr.left + x as i32, y: wr.top + y as i32 })
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_MOUSEMOVE => {
@@ -1168,11 +1212,47 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             };
             let _ = unsafe { TrackMouseEvent(&mut tme) };
 
+            let x = (lp.0 & 0xFFFF) as u16 as i16 as f32;
             let y = ((lp.0 >> 16) & 0xFFFF) as u16 as i16 as f32;
+
+            // While captured, every mouse message in the process routes to
+            // the popup regardless of which window is physically under the
+            // pointer, so a move over the submenu would arrive here instead
+            // of there. Check the submenu's rect first (the POPUP borrow
+            // from `captured_screen_point` has already ended by the time
+            // this runs, so there is no nesting with the SUBMENU borrow
+            // inside `visible_rect`/`hover_at_screen`) and forward it.
+            let over_submenu = captured_screen_point(hwnd, x, y)
+                .filter(|&pt| submenu::visible_rect().is_some_and(|r| point_in_rect(pt, r)));
+            if let Some(pt) = over_submenu {
+                submenu::hover_at_screen(pt);
+                // The pointer is really over the submenu, so the popup must
+                // not also light one of its own rows for the same move.
+                POPUP.with(|p| {
+                    let Ok(mut b) = p.try_borrow_mut() else { return };
+                    let Some(i) = b.as_mut() else { return };
+                    if i.hovered.is_some() {
+                        i.hovered = None;
+                        let (w, h) = i.size;
+                        let _ = push(hwnd, &i.frames[frame_index(None)], w, h, i.pos);
+                    }
+                });
+                return LRESULT(0);
+            }
+
             POPUP.with(|p| {
                 let Ok(mut b) = p.try_borrow_mut() else { return };
                 let Some(i) = b.as_mut() else { return };
-                let hit = item_at(y / i.scale, &i.items).map(|(idx, _)| idx);
+                // Captured mouse messages can land anywhere on screen, not
+                // just over the popup's own client area (item_at only tests
+                // y), so gate the hit test on the point actually being
+                // inside the popup's bounds when captured. Uncaptured, the
+                // OS only ever sends this message for a point over the
+                // window, so no extra check is needed.
+                let in_bounds = !i.captured
+                    || (x >= 0.0 && y >= 0.0 && x < i.size.0 as f32 && y < i.size.1 as f32);
+                let hit =
+                    if in_bounds { item_at(y / i.scale, &i.items).map(|(idx, _)| idx) } else { None };
                 if hit != i.hovered {
                     // Every row change cancels any pending submenu-open
                     // dwell; landing on the HudMenu row starts a fresh one.
@@ -1235,6 +1315,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             // outside the popup's own client area dismisses it.
             let x = (lp.0 & 0xFFFF) as u16 as i16 as f32;
             let y = ((lp.0 >> 16) & 0xFFFF) as u16 as i16 as f32;
+
+            // A captured click that actually landed on the submenu is not a
+            // click-away: leave it for WM_LBUTTONUP to act on and just eat
+            // the down without dismissing.
+            let over_submenu = captured_screen_point(hwnd, x, y)
+                .is_some_and(|pt| submenu::visible_rect().is_some_and(|r| point_in_rect(pt, r)));
+            if over_submenu {
+                return unsafe { DefWindowProcW(hwnd, msg, wp, lp) };
+            }
+
             let outside = POPUP.with(|p| {
                 let Ok(b) = p.try_borrow() else { return false };
                 let Some(i) = b.as_ref() else { return false };
@@ -1249,6 +1339,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             }
         }
         WM_LBUTTONUP => {
+            let x = (lp.0 & 0xFFFF) as u16 as i16 as f32;
+            let y = ((lp.0 >> 16) & 0xFFFF) as u16 as i16 as f32;
+
+            // Mirror WM_LBUTTONDOWN: a captured click that landed on the
+            // submenu is its click, not the popup's. Forward it and skip
+            // the popup's own hovered-item resolution below. The
+            // captured_screen_point/visible_rect calls here have both
+            // already returned by the time click_at_screen runs, so this
+            // never nests a POPUP borrow inside a SUBMENU one.
+            let over_submenu = captured_screen_point(hwnd, x, y)
+                .filter(|&pt| submenu::visible_rect().is_some_and(|r| point_in_rect(pt, r)));
+            if let Some(pt) = over_submenu {
+                submenu::click_at_screen(pt);
+                return LRESULT(0);
+            }
+
             // The borrow closes before anything that can re-enter here.
             let clicked = POPUP.with(|p| {
                 let Ok(b) = p.try_borrow() else { return None };

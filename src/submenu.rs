@@ -30,9 +30,10 @@ use windows::Win32::Graphics::Direct2D::{ID2D1Brush, D2D1_ROUNDED_RECT};
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, LoadCursorW, PostMessageW, RegisterClassW, ShowWindow,
-    IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE, WM_APP, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW,
-    WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, LoadCursorW, PostMessageW, RegisterClassW, SetWindowPos,
+    ShowWindow, HWND_TOPMOST, IDC_ARROW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE,
+    SW_SHOWNOACTIVATE, WM_APP, WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED,
+    WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
 use windows_numerics::Vector2;
 
@@ -138,6 +139,10 @@ pub(crate) fn place(anchor: RECT, work: RECT, w: i32, h: i32, scale: f32) -> POI
 /// Submenu state the window procedure needs. Kept out of `main.rs`'s `APP`,
 /// same reasoning as `popup.rs`'s `POPUP`.
 struct Inner {
+    /// This window's own handle, so free functions outside the window
+    /// procedure (`click_at_screen`, `hover_at_screen`) can repaint without
+    /// needing a `Submenu` handle passed in from the popup.
+    hwnd: HWND,
     owner: HWND,
     visible: bool,
     hovered: Option<usize>,
@@ -174,6 +179,7 @@ impl Submenu {
         let hwnd = create(instance, owner)?;
         SUBMENU.with(|s| {
             *s.borrow_mut() = Some(Inner {
+                hwnd,
                 owner,
                 visible: false,
                 hovered: None,
@@ -235,6 +241,20 @@ impl Submenu {
             });
 
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            // Both this window and the popup sit in the WS_EX_TOPMOST band,
+            // which does not by itself order them relative to each other.
+            // Lift the submenu to the front of that band on every show (not
+            // just the first) since the popup repaints and re-shows on its
+            // own hover changes and can otherwise end up above it again.
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             Ok(())
         }
     }
@@ -252,6 +272,98 @@ impl Submenu {
         });
         let _ = unsafe { ShowWindow(self.hwnd, SW_HIDE) };
     }
+}
+
+/// The submenu's window rect in screen coordinates, if it is currently
+/// visible. The popup uses this (via `popup.rs`'s `captured_screen_point`)
+/// to route a captured mouse message to the submenu instead of treating it
+/// as a click-away. A free function, not a `Submenu` method, since the
+/// popup's window procedure has no `Submenu` handle to call through — only
+/// the thread-local state, same as everything else here.
+pub fn visible_rect() -> Option<RECT> {
+    SUBMENU.with(|s| {
+        // `try_borrow`, not `borrow`: called from the popup's window
+        // procedure, which must never panic into an aborted process.
+        let b = s.try_borrow().ok()?;
+        let i = b.as_ref()?;
+        if !i.visible {
+            return None;
+        }
+        let (w, h) = i.size;
+        Some(RECT { left: i.pos.x, top: i.pos.y, right: i.pos.x + w, bottom: i.pos.y + h })
+    })
+}
+
+/// Resolves a click on `idx` (if any) against the current master-switch
+/// state and posts the matching message to the owner. Shared by the window
+/// procedure's `WM_LBUTTONUP` arm (idx from hover, the normal path when the
+/// submenu receives its own messages) and `click_at_screen` (idx from a
+/// screen point, the path used when the popup had capture and forwards a
+/// click here instead) — one implementation of "a click landed on item N".
+fn click_item(idx: Option<usize>) {
+    let clicked = SUBMENU.with(|s| {
+        let Ok(b) = s.try_borrow() else { return None };
+        let i = b.as_ref()?;
+        let item = i.items.get(idx?).copied()?;
+        if matches!(item, SubItem::LayerToggle(_)) && !i.hud_enabled {
+            // Inert while the master switch is off.
+            return None;
+        }
+        Some((item, i.owner))
+    });
+    if let Some((item, owner)) = clicked {
+        match item {
+            SubItem::HudToggle => {
+                let _ = unsafe {
+                    PostMessageW(Some(owner), HUD_TOGGLE_CLICKED, WPARAM(0), LPARAM(0))
+                };
+            }
+            SubItem::LayerToggle(n) => {
+                let _ = unsafe {
+                    PostMessageW(Some(owner), LAYER_TOGGLE_CLICKED, WPARAM(n as usize), LPARAM(0))
+                };
+            }
+            SubItem::Separator => {}
+        }
+    }
+}
+
+/// Handles a click the popup forwarded because it landed on the submenu
+/// while the popup held mouse capture (see `popup.rs`'s
+/// `captured_screen_point` and its `WM_LBUTTONUP` arm). Converts to the
+/// submenu's own client coordinates and resolves the item the same way the
+/// window procedure would if it had received the click directly.
+pub fn click_at_screen(pt: POINT) {
+    let idx = SUBMENU.with(|s| {
+        let Ok(b) = s.try_borrow() else { return None };
+        let i = b.as_ref()?;
+        if !i.visible {
+            return None;
+        }
+        let y = (pt.y - i.pos.y) as f32;
+        item_at(y / i.scale, &i.items).map(|(idx, _)| idx)
+    });
+    click_item(idx);
+}
+
+/// Handles a hover move the popup forwarded for the same reason as
+/// `click_at_screen`. Updates the submenu's own hover highlight, which
+/// otherwise never sees `WM_MOUSEMOVE` while the popup holds capture.
+pub fn hover_at_screen(pt: POINT) {
+    SUBMENU.with(|s| {
+        let Ok(mut b) = s.try_borrow_mut() else { return };
+        let Some(i) = b.as_mut() else { return };
+        if !i.visible {
+            return;
+        }
+        let y = (pt.y - i.pos.y) as f32;
+        let hit = item_at(y / i.scale, &i.items).map(|(idx, _)| idx);
+        if hit != i.hovered {
+            i.hovered = hit;
+            let (w, h) = i.size;
+            let _ = popup::push(i.hwnd, &i.frames[frame_index(hit)], w, h, i.pos);
+        }
+    });
 }
 
 fn register_class(instance: HINSTANCE) {
@@ -416,37 +528,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
             LRESULT(0)
         }
         WM_LBUTTONUP => {
-            let clicked = SUBMENU.with(|s| {
+            let idx = SUBMENU.with(|s| {
                 let Ok(b) = s.try_borrow() else { return None };
-                let i = b.as_ref()?;
-                let idx = i.hovered?;
-                let item = i.items.get(idx).copied()?;
-                if matches!(item, SubItem::LayerToggle(_)) && !i.hud_enabled {
-                    // Inert while the master switch is off.
-                    return None;
-                }
-                Some((item, i.owner))
+                b.as_ref()?.hovered
             });
-            if let Some((item, owner)) = clicked {
-                match item {
-                    SubItem::HudToggle => {
-                        let _ = unsafe {
-                            PostMessageW(Some(owner), HUD_TOGGLE_CLICKED, WPARAM(0), LPARAM(0))
-                        };
-                    }
-                    SubItem::LayerToggle(n) => {
-                        let _ = unsafe {
-                            PostMessageW(
-                                Some(owner),
-                                LAYER_TOGGLE_CLICKED,
-                                WPARAM(n as usize),
-                                LPARAM(0),
-                            )
-                        };
-                    }
-                    SubItem::Separator => {}
-                }
-            }
+            click_item(idx);
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wp, lp) },
