@@ -168,6 +168,65 @@ pub fn parse_config_version(packet: &[u8]) -> Option<u8> {
     Some(packet[1])
 }
 
+const MONITOR_ITEMS: usize = 7;
+const MONITOR_ITEM_LEN: usize = 9;
+/// Report id plus seven packed 9-byte items.
+pub const MONITOR_REPORT_LEN: usize = 1 + MONITOR_ITEMS * MONITOR_ITEM_LEN;
+
+/// Returns the layer mask if this report carries our sentinel.
+///
+/// The firmware emits a monitor item only when the value changes, so every
+/// sentinel item corresponds to an actual layer switch.
+pub fn parse_monitor_report(buf: &[u8]) -> Option<Layers> {
+    if buf.len() < MONITOR_REPORT_LEN || buf[0] != REPORT_ID_MONITOR {
+        return None;
+    }
+    for i in 0..MONITOR_ITEMS {
+        let o = 1 + i * MONITOR_ITEM_LEN;
+        let usage = u32::from_le_bytes(buf[o..o + 4].try_into().unwrap());
+        if usage != SENTINEL_USAGE {
+            continue;
+        }
+        let value = i32::from_le_bytes(buf[o + 4..o + 8].try_into().unwrap());
+        // layer_state bypasses the x1000 fixed-point convention, so the value
+        // is the raw mask. It is a u8 on the device but travels as an i32.
+        return Some(Layers((value as u32 & 0xFF) as u8));
+    }
+    None
+}
+
+/// Bit mask of currently active layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Layers(pub u8);
+
+impl Layers {
+    pub fn active(&self) -> Vec<u8> {
+        if self.0 == 0 {
+            return vec![0];
+        }
+        (0..8).filter(|i| self.0 & (1 << i) != 0).collect()
+    }
+
+    /// The digit drawn on the tray icon, or `None` for layer 0, which renders
+    /// as the bare glyph.
+    pub fn badge(&self) -> Option<u8> {
+        match *self.active().last().unwrap() {
+            0 => None,
+            n => Some(n),
+        }
+    }
+
+    pub fn label(&self) -> String {
+        let active = self.active();
+        let list: Vec<String> = active.iter().map(u8::to_string).collect();
+        if active.len() == 1 {
+            format!("Layer {}", list[0])
+        } else {
+            format!("Layers {}", list.join(", "))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,5 +411,103 @@ mod tests {
         let mut p = config_response(18);
         p[1] = 19;
         assert_eq!(parse_config_version(&p), None);
+    }
+
+    /// Builds a monitor input report the way the firmware would: report id
+    /// then seven packed 9-byte items of usage, value, hub port.
+    fn monitor_report(items: &[(u32, i32)]) -> Vec<u8> {
+        let mut b = vec![0u8; MONITOR_REPORT_LEN];
+        b[0] = REPORT_ID_MONITOR;
+        for (i, (usage, value)) in items.iter().enumerate() {
+            let o = 1 + i * 9;
+            b[o..o + 4].copy_from_slice(&usage.to_le_bytes());
+            b[o + 4..o + 8].copy_from_slice(&value.to_le_bytes());
+        }
+        b
+    }
+
+    #[test]
+    fn extracts_the_layer_mask_from_the_sentinel_item() {
+        let r = monitor_report(&[(SENTINEL_USAGE, 0b0000_0100)]);
+        assert_eq!(parse_monitor_report(&r).unwrap().0, 0b100);
+    }
+
+    #[test]
+    fn finds_the_sentinel_in_the_last_slot() {
+        let mut items: Vec<(u32, i32)> = (0..6).map(|i| (0x0009_0001 + i, 1)).collect();
+        items.push((SENTINEL_USAGE, 2));
+        assert_eq!(parse_monitor_report(&monitor_report(&items)).unwrap().0, 2);
+    }
+
+    #[test]
+    fn ignores_reports_carrying_only_ordinary_input_usages() {
+        let r = monitor_report(&[(0x0009_0001, 1), (0x0001_0030, -5)]);
+        assert!(parse_monitor_report(&r).is_none());
+    }
+
+    #[test]
+    fn ignores_padding_items_whose_usage_is_zero() {
+        assert!(parse_monitor_report(&monitor_report(&[])).is_none());
+    }
+
+    #[test]
+    fn ignores_reports_with_the_wrong_report_id() {
+        let mut r = monitor_report(&[(SENTINEL_USAGE, 3)]);
+        r[0] = REPORT_ID_CONFIG;
+        assert!(parse_monitor_report(&r).is_none());
+    }
+
+    #[test]
+    fn ignores_a_truncated_report() {
+        assert!(parse_monitor_report(&[REPORT_ID_MONITOR, 0, 0]).is_none());
+    }
+
+    #[test]
+    fn keeps_only_the_low_eight_bits_of_a_negative_value() {
+        // layer_state_mask is a u8 on the device but travels as an i32.
+        let r = monitor_report(&[(SENTINEL_USAGE, -1)]);
+        assert_eq!(parse_monitor_report(&r).unwrap().0, 0xFF);
+    }
+
+    #[test]
+    fn layer_zero_shows_no_badge() {
+        assert_eq!(Layers(0b1).badge(), None);
+        assert_eq!(Layers(0b1).active(), vec![0]);
+        assert_eq!(Layers(0b1).label(), "Layer 0");
+    }
+
+    #[test]
+    fn an_empty_mask_is_treated_as_layer_zero() {
+        // The firmware floors an empty mask to 1, so this should not occur,
+        // but a garbled report must not produce an empty display.
+        assert_eq!(Layers(0).active(), vec![0]);
+        assert_eq!(Layers(0).badge(), None);
+    }
+
+    #[test]
+    fn a_single_active_layer_badges_that_layer() {
+        assert_eq!(Layers(0b1000).badge(), Some(3));
+        assert_eq!(Layers(0b1000).label(), "Layer 3");
+    }
+
+    #[test]
+    fn several_active_layers_badge_the_highest_and_list_them_all() {
+        let l = Layers(0b1010);
+        assert_eq!(l.active(), vec![1, 3]);
+        assert_eq!(l.badge(), Some(3));
+        assert_eq!(l.label(), "Layers 1, 3");
+    }
+
+    #[test]
+    fn layer_zero_alongside_another_layer_still_badges_the_higher_one() {
+        let l = Layers(0b0101);
+        assert_eq!(l.active(), vec![0, 2]);
+        assert_eq!(l.badge(), Some(2));
+        assert_eq!(l.label(), "Layers 0, 2");
+    }
+
+    #[test]
+    fn parses_all_eight_bits_even_though_this_firmware_uses_four() {
+        assert_eq!(Layers(0b1000_0000).badge(), Some(7));
     }
 }
