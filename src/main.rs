@@ -103,10 +103,16 @@ fn run() -> Result<()> {
         });
 
         APP.with(|a| -> Result<()> {
+            // Bound to locals first: `Popup::new` now needs the renderer
+            // (to build its DirectComposition pipeline), and a struct
+            // literal can't refer to a sibling field while building it.
+            let renderer = render::Renderer::new()?;
+            let tray = tray::Tray::new(hwnd)?;
+            let popup = popup::Popup::new(&renderer, hwnd)?;
             *a.borrow_mut() = Some(App {
-                renderer: render::Renderer::new()?,
-                tray: tray::Tray::new(hwnd)?,
-                popup: popup::Popup::new(hwnd)?,
+                renderer,
+                tray,
+                popup,
                 state: device::State {
                     status: device::Status::Disconnected,
                     layers: protocol::Layers(1),
