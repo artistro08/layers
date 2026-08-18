@@ -58,6 +58,16 @@ impl Tray {
         }
     }
 
+    /// Re-adds the icon after Explorer restarts and broadcasts
+    /// `TaskbarCreated`. Reuses the existing `NOTIFYICONDATAW` rather than
+    /// constructing a second `Tray`.
+    pub fn readd(&mut self) {
+        unsafe {
+            let _ = Shell_NotifyIconW(NIM_ADD, &mut self.data);
+        }
+        self.added = true;
+    }
+
     pub fn remove(&mut self) {
         if self.added {
             unsafe {

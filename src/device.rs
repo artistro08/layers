@@ -25,6 +25,22 @@ pub enum Status {
     VersionMismatch = 3,
 }
 
+impl TryFrom<u8> for Status {
+    type Error = ();
+
+    /// Exhaustive over `u8` (no wildcard arm): an out-of-range byte is a
+    /// distinguishable `Err`, never silently coerced into a specific status.
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Status::Disconnected),
+            1 => Ok(Status::NoSlot),
+            2 => Ok(Status::Connected),
+            3 => Ok(Status::VersionMismatch),
+            4..=u8::MAX => Err(()),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct State {
     pub status: Status,
@@ -243,4 +259,21 @@ fn read_response<T>(
         delay *= 2;
     }
     Err(DeviceError::Other("no valid response after 10 retries"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Status;
+
+    #[test]
+    fn status_survives_the_wparam_round_trip() {
+        for s in [
+            Status::Disconnected,
+            Status::NoSlot,
+            Status::Connected,
+            Status::VersionMismatch,
+        ] {
+            assert_eq!(Status::try_from(s as u8), Ok(s));
+        }
+    }
 }

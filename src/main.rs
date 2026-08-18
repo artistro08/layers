@@ -2,17 +2,18 @@
 #![windows_subsystem = "windows"]
 
 use layers::{device, icon, protocol, render, theme, tray};
-use std::cell::RefCell;
-use windows::core::{Result, PCWSTR};
+use std::cell::{Cell, RefCell};
+use windows::core::{w, Result, PCWSTR};
 use windows::Win32::Foundation::{ERROR_ALREADY_EXISTS, GetLastError, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassW, TranslateMessage, CW_USEDEFAULT, HWND_MESSAGE, MSG,
-    WINDOW_EX_STYLE, WINDOW_STYLE, WM_DESTROY, WM_DPICHANGED, WNDCLASSW,
+    CreateWindowExW, DefWindowProcW, DispatchMessageW, FindWindowW, GetMessageW, MessageBoxW,
+    PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, TranslateMessage,
+    CW_USEDEFAULT, MB_ICONERROR, MSG, WINDOW_STYLE, WM_DESTROY, WM_DPICHANGED, WM_SETTINGCHANGE,
+    WNDCLASSW, WS_EX_TOOLWINDOW,
 };
 
 struct App {
@@ -24,6 +25,10 @@ struct App {
 
 thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
+    /// The value `RegisterWindowMessageW(w!("TaskbarCreated"))` returned, so
+    /// `wndproc` can recognize the broadcast when Explorer restarts. 0 means
+    /// unregistered/failed.
+    static TASKBAR_CREATED: Cell<u32> = const { Cell::new(0) };
 }
 
 fn wide(s: &str) -> Vec<u16> {
@@ -31,6 +36,19 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 fn main() -> Result<()> {
+    if let Err(e) = run() {
+        // The product is plug-and-play with no console; a startup failure
+        // must not vanish silently.
+        let text = wide(&e.to_string());
+        unsafe {
+            MessageBoxW(None, PCWSTR(text.as_ptr()), w!("Layers"), MB_ICONERROR);
+        }
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn run() -> Result<()> {
     unsafe {
         CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
 
@@ -51,8 +69,13 @@ fn main() -> Result<()> {
         };
         RegisterClassW(&wc);
 
+        // A normal top-level window that is never shown (no WS_VISIBLE): it
+        // gets DPI/monitor association and broadcast messages
+        // (WM_SETTINGCHANGE, TaskbarCreated) that a HWND_MESSAGE window
+        // never receives, but stays invisible and out of Alt-Tab
+        // (WS_EX_TOOLWINDOW).
         let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
+            WS_EX_TOOLWINDOW,
             PCWSTR(class.as_ptr()),
             PCWSTR(class.as_ptr()),
             WINDOW_STYLE::default(),
@@ -60,7 +83,7 @@ fn main() -> Result<()> {
             CW_USEDEFAULT,
             0,
             0,
-            Some(HWND_MESSAGE),
+            None,
             None,
             Some(instance.into()),
             None,
@@ -91,6 +114,8 @@ fn main() -> Result<()> {
             Ok(())
         })?;
 
+        TASKBAR_CREATED.with(|c| c.set(RegisterWindowMessageW(w!("TaskbarCreated"))));
+
         theme::watch(hwnd, tray::WM_THEME);
         refresh(hwnd);
 
@@ -103,13 +128,26 @@ fn main() -> Result<()> {
     }
 }
 
+/// DPI of the taskbar, which is what the tray icon is actually drawn for and
+/// may differ from this (invisible, unparented) window's own DPI on a
+/// mixed-DPI setup. Falls back to the window's own DPI, then to 96.
+fn taskbar_dpi(hwnd: HWND) -> u32 {
+    unsafe {
+        let dpi = match FindWindowW(w!("Shell_TrayWnd"), None) {
+            Ok(tray) => GetDpiForWindow(tray),
+            Err(_) => GetDpiForWindow(hwnd),
+        };
+        dpi.max(96)
+    }
+}
+
 /// Rebuilds the tray icon and tooltip from current state and theme.
 fn refresh(hwnd: HWND) {
     APP.with(|a| {
         let mut borrow = a.borrow_mut();
         let Some(app) = borrow.as_mut() else { return };
 
-        let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
+        let dpi = taskbar_dpi(hwnd);
         // 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%. Rounded up to a
         // multiple of 4 so the supersampled buffer divides cleanly.
         let size = (16 * dpi as usize / 96).next_multiple_of(4);
@@ -130,24 +168,34 @@ fn refresh(hwnd: HWND) {
 }
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    let taskbar_created = TASKBAR_CREATED.with(|c| c.get());
+    if taskbar_created != 0 && msg == taskbar_created {
+        // Explorer restarted: the icon is gone from a fresh taskbar and
+        // needs to be re-added, not recreated (the mutex is still held).
+        APP.with(|a| {
+            if let Some(app) = a.borrow_mut().as_mut() {
+                app.tray.readd();
+            }
+        });
+        refresh(hwnd);
+        return LRESULT(0);
+    }
+
     match msg {
         tray::WM_DEVICE => {
             APP.with(|a| {
                 if let Some(app) = a.borrow_mut().as_mut() {
                     let packed = wp.0;
                     app.state.layers = protocol::Layers((packed & 0xFF) as u8);
-                    app.state.status = match packed >> 8 {
-                        0 => device::Status::Disconnected,
-                        1 => device::Status::NoSlot,
-                        2 => device::Status::Connected,
-                        _ => device::Status::VersionMismatch,
-                    };
+                    app.state.status =
+                        device::Status::try_from(((packed >> 8) & 0xFF) as u8)
+                            .unwrap_or(device::Status::Disconnected);
                 }
             });
             refresh(hwnd);
             LRESULT(0)
         }
-        tray::WM_THEME | WM_DPICHANGED => {
+        tray::WM_THEME | WM_DPICHANGED | WM_SETTINGCHANGE => {
             refresh(hwnd);
             LRESULT(0)
         }
