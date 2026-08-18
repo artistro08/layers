@@ -11,7 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::WM_APP;
 pub const QUIT_CLICKED: u32 = WM_APP + 4;
 
 /// Logical layout in pixels at 96 dpi.
-pub const WIDTH: f32 = 220.0;
+pub const WIDTH: f32 = 196.0;
 pub const ROW_HEIGHT: f32 = 32.0;
 pub const PADDING: f32 = 2.0;
 
