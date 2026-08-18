@@ -109,6 +109,18 @@ mod tests {
     fn the_three_rows_plus_padding_account_for_the_full_height() {
         assert_eq!(HEIGHT, PADDING * 2.0 + ROW_HEIGHT * 3.0);
     }
+
+    /// `row_rect` (painted geometry) and `row_at` (hit testing) each encode
+    /// the row order independently. This round trip is the guard against
+    /// them silently disagreeing if `Row` or `frame_index` is reordered.
+    #[test]
+    fn row_at_of_row_rect_midpoint_returns_the_same_row() {
+        for row in [Row::Status, Row::Layer, Row::Quit] {
+            let rect = row_rect(row, 1.0);
+            let mid_y = (rect.top + rect.bottom) / 2.0;
+            assert_eq!(row_at(mid_y), Some(row));
+        }
+    }
 }
 
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
@@ -199,14 +211,17 @@ use windows::Win32::Graphics::Gdi::{
     BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
-use windows::Win32::UI::Input::KeyboardAndMouse::VK_ESCAPE;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ESCAPE,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetCursorPos, PostMessageW,
-    RegisterClassW, SetForegroundWindow, ShowWindow, UpdateLayeredWindow, SW_HIDE,
-    SW_SHOWNOACTIVATE, ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONUP,
-    WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
-    WS_EX_TOPMOST, WS_POPUP,
+    CreateWindowExW, DefWindowProcW, GetCursorPos, LoadCursorW, PostMessageW, RegisterClassW,
+    SetForegroundWindow, ShowWindow, UpdateLayeredWindow, IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE,
+    ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP,
 };
 use windows_numerics::Vector2;
 
@@ -238,6 +253,10 @@ struct Inner {
     /// One pre-rendered frame per hover state, indexed by [`frame_index`], so
     /// a hover repaint needs no renderer inside the window procedure.
     frames: [Vec<u8>; 4],
+    /// Set when `show()` fell back to `SetCapture` because
+    /// `SetForegroundWindow` was denied by the foreground lock, so
+    /// `WM_LBUTTONDOWN` knows to dismiss on an outside click.
+    captured: bool,
 }
 
 thread_local! {
@@ -274,6 +293,7 @@ impl Popup {
                     pos: POINT::default(),
                     size: (0, 0),
                     frames: Default::default(),
+                    captured: false,
                 });
             });
             Ok(Popup { hwnd })
@@ -354,8 +374,29 @@ impl Popup {
             if open.is_none() {
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
                 // Without foreground ownership the popup never receives the
-                // kill-focus that dismisses it.
-                let _ = SetForegroundWindow(self.hwnd);
+                // kill-focus that dismisses it. WS_EX_NOACTIVATE does not
+                // block this call — it is MSDN's own remedy for it — but
+                // WM_TRAY arrives as a *posted* shell message, so the
+                // foreground lock can still deny us activation. When it
+                // does, SetForegroundWindow returns FALSE and
+                // WM_ACTIVATEAPP/WM_KILLFOCUS/WM_KEYDOWN never fire, so we
+                // fall back to SetCapture: any click outside the popup then
+                // dismisses it via WM_LBUTTONDOWN below.
+                //
+                // This call happens while the caller's `APP.borrow_mut()`
+                // (in main.rs) is still live. That is safe only because
+                // main's wndproc handles no activation message — adding a
+                // WM_ACTIVATE/WM_ACTIVATEAPP arm there that calls refresh()
+                // would re-enter APP and panic.
+                let became_foreground = SetForegroundWindow(self.hwnd).as_bool();
+                if !became_foreground {
+                    let _ = SetCapture(self.hwnd);
+                    POPUP.with(|p| {
+                        if let Some(i) = p.borrow_mut().as_mut() {
+                            i.captured = true;
+                        }
+                    });
+                }
             }
             Ok(())
         }
@@ -369,10 +410,15 @@ impl Popup {
 fn register_class(instance: HINSTANCE) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| unsafe {
+        // Without an hCursor, DefWindowProcW's WM_SETCURSOR never sets an
+        // arrow, so the pointer keeps whatever shape the previously-hovered
+        // window left it in.
+        let cursor = LoadCursorW(None, IDC_ARROW).unwrap_or_default();
         let wc = WNDCLASSW {
             lpfnWndProc: Some(wndproc),
             hInstance: instance,
             lpszClassName: CLASS,
+            hCursor: cursor,
             ..Default::default()
         };
         RegisterClassW(&wc);
@@ -404,12 +450,17 @@ fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
 fn dismiss(hwnd: HWND) {
     unsafe {
         let _ = ShowWindow(hwnd, SW_HIDE);
+        // Must run on every dismissal path (including Quit), or a
+        // foreground-lock fallback capture from `show()` leaves the mouse
+        // captured process-wide.
+        let _ = ReleaseCapture();
     }
     POPUP.with(|p| {
         if let Ok(mut b) = p.try_borrow_mut() {
             if let Some(i) = b.as_mut() {
                 i.visible = false;
                 i.hovered = None;
+                i.captured = false;
             }
         }
     });
@@ -691,6 +742,16 @@ fn push(hwnd: HWND, bgra: &[u8], w: i32, h: i32, pos: POINT) -> Result<()> {
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match msg {
         WM_MOUSEMOVE => {
+            // TME_LEAVE is one-shot: re-arm it on every move so a genuine
+            // leave still posts WM_MOUSELEAVE later.
+            let mut tme = TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: hwnd,
+                dwHoverTime: 0,
+            };
+            let _ = unsafe { TrackMouseEvent(&mut tme) };
+
             let y = ((lp.0 >> 16) & 0xFFFF) as u16 as i16 as f32;
             POPUP.with(|p| {
                 let Ok(mut b) = p.try_borrow_mut() else { return };
@@ -703,6 +764,37 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 }
             });
             LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            POPUP.with(|p| {
+                let Ok(mut b) = p.try_borrow_mut() else { return };
+                let Some(i) = b.as_mut() else { return };
+                if i.hovered.is_some() {
+                    i.hovered = None;
+                    let (w, h) = i.size;
+                    let _ = push(hwnd, &i.frames[frame_index(None)], w, h, i.pos);
+                }
+            });
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN => {
+            // Fallback dismissal for when `show()` could not get
+            // foreground rights (see the comment in `show`): a click
+            // outside the popup's own client area dismisses it.
+            let x = (lp.0 & 0xFFFF) as u16 as i16 as f32;
+            let y = ((lp.0 >> 16) & 0xFFFF) as u16 as i16 as f32;
+            let outside = POPUP.with(|p| {
+                let Ok(b) = p.try_borrow() else { return false };
+                let Some(i) = b.as_ref() else { return false };
+                i.captured
+                    && (x < 0.0 || y < 0.0 || x >= i.size.0 as f32 || y >= i.size.1 as f32)
+            });
+            if outside {
+                dismiss(hwnd);
+                LRESULT(0)
+            } else {
+                unsafe { DefWindowProcW(hwnd, msg, wp, lp) }
+            }
         }
         WM_LBUTTONUP => {
             // The borrow closes before anything that can re-enter here.

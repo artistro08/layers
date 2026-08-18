@@ -215,6 +215,11 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 APP.with(|a| {
                     if let Some(app) = a.borrow_mut().as_mut() {
                         let state = app.state;
+                        // popup::show() calls SetForegroundWindow while this
+                        // APP.borrow_mut() is still live. Safe only because
+                        // this wndproc handles no activation message; a
+                        // WM_ACTIVATE/WM_ACTIVATEAPP arm here that called
+                        // refresh() would re-enter APP and panic.
                         let _ = app.popup.show(&app.renderer, state);
                     }
                 });
@@ -227,6 +232,16 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         tray::WM_THEME | WM_DPICHANGED | WM_SETTINGCHANGE => {
             refresh(hwnd);
+            // An open popup would otherwise show stale colors/DPI through a
+            // theme, accent, or DPI change.
+            APP.with(|a| {
+                if let Some(app) = a.borrow_mut().as_mut() {
+                    if app.popup.is_visible() {
+                        let state = app.state;
+                        let _ = app.popup.show(&app.renderer, state);
+                    }
+                }
+            });
             LRESULT(0)
         }
         WM_DESTROY => {
