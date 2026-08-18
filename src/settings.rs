@@ -48,7 +48,7 @@ impl Settings {
 
     /// The layer a HUD would be announcing: the highest active layer, which
     /// is the same one the tray icon badges.
-    pub fn displayed_layer(layers: protocol::Layers) -> u8 {
+    fn displayed_layer(layers: protocol::Layers) -> u8 {
         *layers.active().last().unwrap()
     }
 

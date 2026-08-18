@@ -1,11 +1,10 @@
-//! Theme and accent color, read from the registry and watched for changes.
+//! Theme, read from the registry and watched for changes.
 //!
 //! Windows tracks the taskbar theme and the app theme separately, so this
 //! module does too.
 
-use windows::core::{BOOL, PCWSTR};
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::HWND;
-use windows::Win32::Graphics::Dwm::DwmGetColorizationColor;
 use windows::Win32::System::Registry::{
     RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW, HKEY, HKEY_CURRENT_USER, KEY_NOTIFY,
     KEY_READ, REG_NOTIFY_CHANGE_LAST_SET, RRF_RT_REG_DWORD,
@@ -49,21 +48,6 @@ pub fn dark_apps() -> bool {
     dword("AppsUseLightTheme").unwrap_or(1) == 0
 }
 
-pub fn accent() -> (u8, u8, u8) {
-    unsafe {
-        let mut color = 0u32;
-        let mut opaque = BOOL(0);
-        if DwmGetColorizationColor(&mut color, &mut opaque).is_err() {
-            // Windows default blue.
-            return (0x00, 0x78, 0xD4);
-        }
-        (
-            ((color >> 16) & 0xFF) as u8,
-            ((color >> 8) & 0xFF) as u8,
-            (color & 0xFF) as u8,
-        )
-    }
-}
 
 /// Spawns a thread that posts `msg` to `hwnd` whenever the Personalize key
 /// changes, so a theme switch re-tints the icon without a restart.

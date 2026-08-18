@@ -140,16 +140,6 @@ pub fn parse_path(d: &str) -> Result<Vec<Figure>, String> {
                     f.segments.push(Segment::Line(Point { x, y }));
                 }
             }
-            'H' => {
-                let f = current.as_mut().ok_or("H before M")?;
-                if nums.is_empty() {
-                    return Err("H needs at least one coordinate".into());
-                }
-                for &x in &nums {
-                    let y = current_point(f).y;
-                    f.segments.push(Segment::Line(Point { x, y }));
-                }
-            }
             'Z' => {
                 if !nums.is_empty() {
                     return Err("Z takes no coordinates".into());
@@ -239,14 +229,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn h_appends_absolute_horizontal_linetos_reusing_the_current_y() {
-        let f = parse_path("M1 2H5 8Z").unwrap();
-        assert_eq!(
-            f[0].segments,
-            vec![Segment::Line(p(5.0, 2.0)), Segment::Line(p(8.0, 2.0))]
-        );
-    }
 
     #[test]
     fn v_before_any_m_errors() {

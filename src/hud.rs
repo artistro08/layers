@@ -150,16 +150,6 @@ impl Hud {
         }
     }
 
-    /// Hides the HUD immediately, skipping any in-progress fade, and frees
-    /// its frame.
-    pub fn hide(&mut self) {
-        HUD.with(|hc| {
-            let Ok(mut b) = hc.try_borrow_mut() else { return };
-            let Some(i) = b.as_mut() else { return };
-            release(self.hwnd, i);
-        });
-        let _ = unsafe { ShowWindow(self.hwnd, SW_HIDE) };
-    }
 }
 
 /// Frees the current frame's GDI resources and kills the fade timer.

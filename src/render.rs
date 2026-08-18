@@ -41,9 +41,6 @@ impl Renderer {
         }
     }
 
-    pub fn d2d(&self) -> &ID2D1Factory {
-        &self.d2d
-    }
 
     pub fn dwrite(&self) -> &IDWriteFactory {
         &self.dwrite

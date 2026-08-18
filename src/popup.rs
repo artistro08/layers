@@ -58,16 +58,27 @@ pub fn items() -> Vec<Item> {
 }
 
 /// The vertical space, in logical pixels, an item occupies.
-fn item_height(item: Item) -> f32 {
-    match item {
-        Item::Separator => SEPARATOR_H,
-        _ => ROW_HEIGHT,
+/// Anything laid out as a vertical stack of rows in one of these panels.
+/// Implemented by both the popup's `Item` and the submenu's `SubItem`, which
+/// is what lets them share the geometry below instead of keeping two copies
+/// that can drift.
+pub trait PanelItem: Copy {
+    fn is_separator(self) -> bool;
+}
+
+impl PanelItem for Item {
+    fn is_separator(self) -> bool {
+        matches!(self, Item::Separator)
     }
+}
+
+pub(crate) fn item_height<T: PanelItem>(item: T) -> f32 {
+    if item.is_separator() { SEPARATOR_H } else { ROW_HEIGHT }
 }
 
 /// The panel's content height (everything but the top/bottom padding), in
 /// logical pixels, up to but excluding `items[index]`.
-fn item_offset(index: usize, items: &[Item]) -> f32 {
+pub(crate) fn item_offset<T: PanelItem>(index: usize, items: &[T]) -> f32 {
     items[..index].iter().copied().map(item_height).sum()
 }
 
@@ -75,7 +86,7 @@ fn item_offset(index: usize, items: &[Item]) -> f32 {
 /// Replaces what used to be a fixed `HEIGHT` constant now that the item
 /// list is dynamic; `place()` already takes width/height as arguments, so
 /// positioning follows automatically.
-pub fn panel_height(items: &[Item]) -> f32 {
+pub fn panel_height<T: PanelItem>(items: &[T]) -> f32 {
     PADDING * 2.0 + items.iter().copied().map(item_height).sum::<f32>()
 }
 
@@ -83,7 +94,7 @@ pub fn panel_height(items: &[Item]) -> f32 {
 /// dpi (i.e. including the shadow margin, as the window's own client area
 /// does). A separator band, like the padding above the first row and below
 /// the last, resolves to `None`.
-pub fn item_at(y: f32, items: &[Item]) -> Option<(usize, Item)> {
+pub fn item_at<T: PanelItem>(y: f32, items: &[T]) -> Option<(usize, T)> {
     let y = y - SHADOW_MARGIN;
     if y < PADDING {
         return None;
@@ -92,7 +103,7 @@ pub fn item_at(y: f32, items: &[Item]) -> Option<(usize, Item)> {
     for (i, &item) in items.iter().enumerate() {
         let h = item_height(item);
         if rel < h {
-            return if matches!(item, Item::Separator) { None } else { Some((i, item)) };
+            return if item.is_separator() { None } else { Some((i, item)) };
         }
         rel -= h;
     }
@@ -262,7 +273,7 @@ mod tests {
     fn item_at_of_row_rect_midpoint_returns_the_same_item() {
         let list = items();
         for (i, item) in list.iter().enumerate() {
-            let rect = row_rect(i, &list, 1.0);
+            let rect = row_rect(i, &list, 1.0, WIDTH);
             let mid_y = (rect.top + rect.bottom) / 2.0;
             if matches!(item, Item::Separator) {
                 assert_eq!(item_at(mid_y, &list), None);
@@ -583,9 +594,6 @@ impl Popup {
         }
     }
 
-    pub fn hide(&mut self) {
-        dismiss(self.hwnd);
-    }
 
     /// The `HudMenu` row's rect in screen coordinates, if the popup is
     /// currently showing one. `submenu::show` anchors to this.
@@ -594,7 +602,7 @@ impl Popup {
             let b = p.try_borrow().ok()?;
             let i = b.as_ref()?;
             let idx = i.items.iter().position(|it| *it == Item::HudMenu)?;
-            let r = row_rect(idx, &i.items, i.scale);
+            let r = row_rect(idx, &i.items, i.scale, WIDTH);
             Some(RECT {
                 left: i.pos.x + r.left.round() as i32,
                 top: i.pos.y + r.top.round() as i32,
@@ -702,13 +710,22 @@ fn dismiss(hwnd: HWND) {
 /// Positions the item at `index` within `items`, in bitmap-space pixels at
 /// `scale`. Separators contribute `SEPARATOR_H`, every other item
 /// `ROW_HEIGHT`.
-fn row_rect(index: usize, items: &[Item], scale: f32) -> D2D_RECT_F {
+/// `width` is explicit rather than read from a module constant: the popup
+/// and the submenu are different widths, and two same-named `WIDTH`
+/// constants resolved by lexical scope is exactly the kind of thing that
+/// silently draws the wrong rect.
+pub(crate) fn row_rect<T: PanelItem>(
+    index: usize,
+    items: &[T],
+    scale: f32,
+    width: f32,
+) -> D2D_RECT_F {
     let top = (SHADOW_MARGIN + PADDING + item_offset(index, items)) * scale;
     let h = item_height(items[index]);
     D2D_RECT_F {
         left: SHADOW_MARGIN * scale,
         top,
-        right: (SHADOW_MARGIN + WIDTH) * scale,
+        right: (SHADOW_MARGIN + width) * scale,
         bottom: top + h * scale,
     }
 }
@@ -938,7 +955,7 @@ fn paint(
 
         if let Some(idx) = hovered {
             let rr = D2D1_ROUNDED_RECT {
-                rect: inset_xy(row_rect(idx, items, s), HOVER_INSET_X * s, HOVER_INSET_Y * s),
+                rect: inset_xy(row_rect(idx, items, s, WIDTH), HOVER_INSET_X * s, HOVER_INSET_Y * s),
                 radiusX: 4.0 * s,
                 radiusY: 4.0 * s,
             };
@@ -949,7 +966,7 @@ fn paint(
         let ink = rt.CreateSolidColorBrush(&text(dark), None)?;
 
         for (i, item) in items.iter().enumerate() {
-            let row = row_rect(i, items, s);
+            let row = row_rect(i, items, s, WIDTH);
             match *item {
                 Item::Status => {
                     let middle = (row.top + row.bottom) / 2.0;

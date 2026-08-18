@@ -15,9 +15,8 @@
 //! react to clicks.
 
 use crate::popup::{
-    self, border, draw_shadow, draw_toggle_row, hover, inset, inset_xy, monitor_work_area,
-    separator, surface, text, CORNER, HOVER_INSET_X, HOVER_INSET_Y, PADDING, ROW_HEIGHT,
-    SEPARATOR_H, SHADOW_MARGIN,
+    self, item_at, panel_height, border, draw_shadow, draw_toggle_row, hover, inset, inset_xy, monitor_work_area,
+    separator, surface, text, CORNER, HOVER_INSET_X, HOVER_INSET_Y, SHADOW_MARGIN,
 };
 use crate::render::Renderer;
 use crate::settings::Settings;
@@ -65,6 +64,18 @@ pub enum SubItem {
     LayerToggle(u8),
 }
 
+impl crate::popup::PanelItem for SubItem {
+    fn is_separator(self) -> bool {
+        matches!(self, SubItem::Separator)
+    }
+}
+
+/// This panel's own width, so callers cannot accidentally pick up the
+/// popup's.
+fn row_rect(index: usize, items: &[SubItem], scale: f32) -> D2D_RECT_F {
+    crate::popup::row_rect(index, items, scale, WIDTH)
+}
+
 /// The submenu's fixed contents, in order.
 pub fn items() -> Vec<SubItem> {
     let mut v = vec![SubItem::HudToggle, SubItem::Separator];
@@ -72,50 +83,10 @@ pub fn items() -> Vec<SubItem> {
     v
 }
 
-fn item_height(item: SubItem) -> f32 {
-    match item {
-        SubItem::Separator => SEPARATOR_H,
-        _ => ROW_HEIGHT,
-    }
-}
 
-fn item_offset(index: usize, items: &[SubItem]) -> f32 {
-    items[..index].iter().copied().map(item_height).sum()
-}
 
-fn panel_height(items: &[SubItem]) -> f32 {
-    PADDING * 2.0 + items.iter().copied().map(item_height).sum::<f32>()
-}
 
-/// Mirrors `popup::item_at`: which item contains a y coordinate, in
-/// bitmap-space client pixels at 96 dpi.
-fn item_at(y: f32, items: &[SubItem]) -> Option<(usize, SubItem)> {
-    let y = y - SHADOW_MARGIN;
-    if y < PADDING {
-        return None;
-    }
-    let mut rel = y - PADDING;
-    for (i, &item) in items.iter().enumerate() {
-        let h = item_height(item);
-        if rel < h {
-            return if matches!(item, SubItem::Separator) { None } else { Some((i, item)) };
-        }
-        rel -= h;
-    }
-    None
-}
 
-/// Mirrors `popup::row_rect`.
-fn row_rect(index: usize, items: &[SubItem], scale: f32) -> D2D_RECT_F {
-    let top = (SHADOW_MARGIN + PADDING + item_offset(index, items)) * scale;
-    let h = item_height(items[index]);
-    D2D_RECT_F {
-        left: SHADOW_MARGIN * scale,
-        top,
-        right: (SHADOW_MARGIN + WIDTH) * scale,
-        bottom: top + h * scale,
-    }
-}
 
 /// Places the submenu beside `anchor` (the popup's `HudMenu` row, in screen
 /// coordinates): its first row lines up with `anchor`'s top, and it opens
