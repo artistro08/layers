@@ -861,9 +861,10 @@ fn paint(
         // Separator between the Layer and Quit rows.
         let sep_y = row.bottom + SEPARATOR_H / 2.0 * s;
         let sep_brush = rt.CreateSolidColorBrush(&separator(dark), None)?;
+        // Edge to edge: `row` already spans the panel, so no text insets here.
         rt.DrawLine(
-            Vector2 { X: row.left + TEXT_LEFT * s, Y: sep_y },
-            Vector2 { X: row.right - TEXT_RIGHT * s, Y: sep_y },
+            Vector2 { X: row.left, Y: sep_y },
+            Vector2 { X: row.right, Y: sep_y },
             &sep_brush,
             s,
             None,
