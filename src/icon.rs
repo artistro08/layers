@@ -14,7 +14,7 @@ pub const POWER_PATH: &str = "M10.75 2.5C10.75 2.08579 10.4142 1.75 10 1.75C9.58
 /// The power glyph is authored on a 20x20 grid.
 pub const POWER_VIEWBOX: f32 = 20.0;
 
-use crate::compose::{downsample, to_premultiplied_bgra};
+use crate::compose::{center_ink, downsample, to_premultiplied_bgra};
 use crate::geometry::Segment;
 use crate::render::Renderer;
 use windows::core::{Result, PCWSTR};
@@ -62,7 +62,7 @@ pub fn build(
 
     let coverage = match badge {
         None => r.render_alpha(hi, |rt| draw_glyph(rt, hi as f32))?,
-        Some(n) => r.render_alpha(hi, |rt| draw_digit(r, rt, hi as f32, n))?,
+        Some(n) => center_ink(&r.render_alpha(hi, |rt| draw_digit(r, rt, hi as f32, n))?),
     };
 
     let small = downsample(&coverage, SS);
