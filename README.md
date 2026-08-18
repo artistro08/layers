@@ -125,3 +125,7 @@ cargo test
 Tray and menu glyphs are from [fluentui-system-icons](https://github.com/microsoft/fluentui-system-icons) (MIT): `ic_fluent_layer_24_filled`, `ic_fluent_power_20_filled`, `ic_fluent_checkmark_20_filled` and `ic_fluent_chevron_right_20_filled`. See [`assets/NOTICE-fluentui.txt`](assets/NOTICE-fluentui.txt).
 
 Built for [jfedor2/hid-remapper](https://github.com/jfedor2/hid-remapper).
+
+## License
+
+[MIT](LICENSE).
