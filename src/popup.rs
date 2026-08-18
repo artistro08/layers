@@ -319,7 +319,11 @@ const ICON_LEFT: f32 = 12.0;
 /// Side length of the icon column's square.
 const ICON_SIZE: f32 = 16.0;
 /// Left inset of every row's text, clearing the icon column.
-const TEXT_LEFT: f32 = 44.0;
+const TEXT_LEFT: f32 = 38.0;
+/// The layers glyph reads smaller than the dot and the power symbol at the
+/// same box size, so it gets a slightly larger one. Icons are centred on the
+/// column rather than left-aligned, so differing sizes stay optically aligned.
+const LAYER_ICON_SIZE: f32 = 19.0;
 /// Right inset of the layer pill.
 const TEXT_RIGHT: f32 = 16.0;
 const PILL_W: f32 = 24.0;
@@ -581,13 +585,20 @@ fn inset_xy(r: D2D_RECT_F, x: f32, y: f32) -> D2D_RECT_F {
 
 /// The icon column's square within a row, vertically centred.
 fn icon_rect(row: D2D_RECT_F, scale: f32) -> D2D_RECT_F {
+    icon_rect_sized(row, scale, ICON_SIZE)
+}
+
+/// Centred on the icon column's midpoint, so an icon drawn at a different
+/// size still lines up with its neighbours.
+fn icon_rect_sized(row: D2D_RECT_F, scale: f32, size: f32) -> D2D_RECT_F {
     let middle = (row.top + row.bottom) / 2.0;
-    let left = row.left + ICON_LEFT * scale;
+    let center_x = row.left + (ICON_LEFT + ICON_SIZE / 2.0) * scale;
+    let half = size / 2.0 * scale;
     D2D_RECT_F {
-        left,
-        top: middle - ICON_SIZE / 2.0 * scale,
-        right: left + ICON_SIZE * scale,
-        bottom: middle + ICON_SIZE / 2.0 * scale,
+        left: center_x - half,
+        top: middle - half,
+        right: center_x + half,
+        bottom: middle + half,
     }
 }
 
@@ -800,7 +811,7 @@ fn paint(
             rt,
             icon::GLYPH_PATH,
             icon::GLYPH_VIEWBOX,
-            icon_rect(row, s),
+            icon_rect_sized(row, s, LAYER_ICON_SIZE),
             &ink,
         )?;
         let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
