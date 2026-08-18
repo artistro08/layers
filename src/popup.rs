@@ -1,10 +1,8 @@
 //! The Fluent popup.
 //!
-//! A DirectComposition-backed window: content is painted onto a transparent
-//! background and DWM supplies the acrylic backdrop, rounded corners and
-//! shadow around it. DWMWA_SYSTEMBACKDROP_TYPE fills the entire window rect,
-//! so it can't coexist with the old layered window's transparent shadow
-//! margin — DWM owns the background now, and painting here is content only.
+//! A layered window painted through Direct2D. Layered rather than a DWM
+//! backdrop because DWMWA_SYSTEMBACKDROP_TYPE does not compose with a
+//! Direct2D-painted client area without a DXGI composition swapchain.
 
 use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::UI::WindowsAndMessaging::WM_APP;
@@ -21,9 +19,13 @@ pub const PADDING: f32 = 4.0;
 /// independent of PADDING so tuning the panel's vertical breathing room does
 /// not also resize the highlight.
 const HOVER_INSET: f32 = 4.0;
+pub const CORNER: f32 = 8.0;
 /// Height of the rule between the Layer and Quit rows: 3px gap, 1px rule,
 /// 3px gap.
 pub const SEPARATOR_H: f32 = 7.0;
+/// Transparent bleed around the panel that the drop shadow is drawn into.
+/// The bitmap and window are the panel plus this margin on all sides.
+pub const SHADOW_MARGIN: f32 = 16.0;
 pub const HEIGHT: f32 = PADDING * 2.0 + ROW_HEIGHT * 3.0 + SEPARATOR_H;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -33,10 +35,11 @@ pub enum Row {
     Quit,
 }
 
-/// Which row contains a y coordinate, in client pixels at 96 dpi. The window
-/// rect is exactly the panel rect now, so this is just the panel's own
-/// coordinate space.
+/// Which row contains a y coordinate, in bitmap-space client pixels at 96
+/// dpi (i.e. including the shadow margin, as the window's own client area
+/// does).
 pub fn row_at(y: f32) -> Option<Row> {
+    let y = y - SHADOW_MARGIN;
     if y < PADDING {
         return None;
     }
@@ -57,16 +60,22 @@ pub fn row_at(y: f32) -> Option<Row> {
 /// Clamps the popup into the work area so it never hangs off screen or under
 /// the taskbar. Prefers opening above the cursor, as a taskbar flyout does.
 ///
-/// `w`/`h` are the panel's dimensions in physical pixels, already scaled by
-/// the caller. Returns the panel's (and so the window's) top-left directly.
-pub fn place(cursor: POINT, work: RECT, w: i32, h: i32) -> POINT {
-    let x = (cursor.x - w / 2).clamp(work.left, (work.right - w).max(work.left));
-    let y = if cursor.y - h - 12 >= work.top {
-        cursor.y - h - 12
+/// `w`/`h` are the bitmap's (shadow-inclusive) dimensions in physical
+/// pixels; `scale` converts `SHADOW_MARGIN` into that same space. The
+/// clamping itself works in the visible panel's dimensions, then the
+/// returned point is shifted back to the bitmap's top-left so the panel —
+/// not the transparent bleed around it — lands where the math says.
+pub fn place(cursor: POINT, work: RECT, w: i32, h: i32, scale: f32) -> POINT {
+    let margin = (SHADOW_MARGIN * scale).round() as i32;
+    let panel_w = w - margin * 2;
+    let panel_h = h - margin * 2;
+    let x = (cursor.x - panel_w / 2).clamp(work.left, (work.right - panel_w).max(work.left));
+    let y = if cursor.y - panel_h - 12 >= work.top {
+        cursor.y - panel_h - 12
     } else {
-        (cursor.y + 12).min((work.bottom - h).max(work.top))
+        (cursor.y + 12).min((work.bottom - panel_h).max(work.top))
     };
-    POINT { x, y }
+    POINT { x: x - margin, y: y - margin }
 }
 
 #[cfg(test)]
@@ -77,76 +86,90 @@ mod tests {
         RECT { left: 0, top: 0, right: 1920, bottom: 1040 }
     }
 
-    // Panel dimensions at scale 1.0.
-    fn panel_wh() -> (i32, i32) {
-        (WIDTH as i32, HEIGHT as i32)
+    // Bitmap dimensions at scale 1.0: panel plus shadow margin on all sides.
+    fn bitmap_wh() -> (i32, i32) {
+        (
+            (WIDTH + SHADOW_MARGIN * 2.0) as i32,
+            (HEIGHT + SHADOW_MARGIN * 2.0) as i32,
+        )
     }
 
     #[test]
     fn hit_testing_maps_each_row_band() {
-        assert_eq!(row_at(PADDING + 1.0), Some(Row::Status));
-        assert_eq!(row_at(PADDING + ROW_HEIGHT + 1.0), Some(Row::Layer));
+        assert_eq!(row_at(SHADOW_MARGIN + PADDING + 1.0), Some(Row::Status));
         assert_eq!(
-            row_at(PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H + 1.0),
+            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT + 1.0),
+            Some(Row::Layer)
+        );
+        assert_eq!(
+            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H + 1.0),
             Some(Row::Quit)
         );
     }
 
     #[test]
+    fn hit_testing_rejects_the_shadow_margin_above_the_panel() {
+        assert_eq!(row_at(SHADOW_MARGIN - 1.0), None);
+    }
+
+    #[test]
     fn hit_testing_rejects_the_padding_above_the_first_row() {
-        assert_eq!(row_at(PADDING - 1.0), None);
+        assert_eq!(row_at(SHADOW_MARGIN + PADDING - 1.0), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_separator_gap_between_layer_and_quit() {
-        let gap_mid = PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H / 2.0;
+        let gap_mid = SHADOW_MARGIN + PADDING + ROW_HEIGHT * 2.0 + SEPARATOR_H / 2.0;
         assert_eq!(row_at(gap_mid), None);
     }
 
     #[test]
     fn hit_testing_rejects_the_padding_below_the_last_row() {
         assert_eq!(
-            row_at(PADDING + ROW_HEIGHT * 3.0 + SEPARATOR_H + 1.0),
+            row_at(SHADOW_MARGIN + PADDING + ROW_HEIGHT * 3.0 + SEPARATOR_H + 1.0),
             None
         );
     }
 
     #[test]
     fn the_popup_opens_above_the_cursor_when_there_is_room() {
-        let (w, h) = panel_wh();
-        let p = place(POINT { x: 960, y: 1000 }, work(), w, h);
-        // The panel's bottom edge must clear the cursor by the 12px gap.
-        assert!(p.y + h <= 1000 - 12);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 960, y: 1000 }, work(), w, h, 1.0);
+        // The panel's bottom edge (bitmap y + margin + panel height) must
+        // clear the cursor by the 12px gap.
+        assert!(p.y + SHADOW_MARGIN as i32 + (HEIGHT as i32) <= 1000 - 12);
     }
 
     #[test]
     fn the_popup_drops_below_the_cursor_when_there_is_no_room_above() {
-        let (w, h) = panel_wh();
-        let p = place(POINT { x: 960, y: 5 }, work(), w, h);
-        // The panel's top edge must sit below the cursor.
-        assert!(p.y > 5);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 960, y: 5 }, work(), w, h, 1.0);
+        // The panel's top edge (bitmap y + margin) must sit below the cursor.
+        assert!(p.y + SHADOW_MARGIN as i32 > 5);
     }
 
     #[test]
     fn the_popup_never_hangs_off_the_right_edge() {
-        let (w, h) = panel_wh();
-        let p = place(POINT { x: 1918, y: 1000 }, work(), w, h);
-        assert_eq!(p.x + w, 1920);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 1918, y: 1000 }, work(), w, h, 1.0);
+        // Panel right edge (bitmap x + margin + panel width) sits exactly at
+        // the work area's right edge.
+        assert_eq!(p.x + SHADOW_MARGIN as i32 + WIDTH as i32, 1920);
     }
 
     #[test]
     fn the_popup_never_hangs_off_the_left_edge() {
-        let (w, h) = panel_wh();
-        let p = place(POINT { x: 2, y: 1000 }, work(), w, h);
-        assert_eq!(p.x, 0);
+        let (w, h) = bitmap_wh();
+        let p = place(POINT { x: 2, y: 1000 }, work(), w, h, 1.0);
+        assert_eq!(p.x + SHADOW_MARGIN as i32, 0);
     }
 
     #[test]
     fn the_popup_stays_inside_a_work_area_that_does_not_start_at_the_origin() {
-        let (w, h) = panel_wh();
+        let (w, h) = bitmap_wh();
         let work = RECT { left: 1920, top: 0, right: 3840, bottom: 1040 };
-        let p = place(POINT { x: 1921, y: 1000 }, work, w, h);
-        assert_eq!(p.x, 1920);
+        let p = place(POINT { x: 1921, y: 1000 }, work, w, h, 1.0);
+        assert_eq!(p.x + SHADOW_MARGIN as i32, 1920);
     }
 
     #[test]
@@ -169,6 +192,15 @@ mod tests {
 
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 
+/// Fluent surface colors. Alpha below 1.0 gives translucency without blur.
+pub fn surface(dark: bool) -> D2D1_COLOR_F {
+    if dark {
+        D2D1_COLOR_F { r: 0.17, g: 0.17, b: 0.17, a: 0.97 }
+    } else {
+        D2D1_COLOR_F { r: 0.98, g: 0.98, b: 0.98, a: 0.97 }
+    }
+}
+
 pub fn text(dark: bool) -> D2D1_COLOR_F {
     if dark {
         D2D1_COLOR_F { r: 1.0, g: 1.0, b: 1.0, a: 0.90 }
@@ -181,6 +213,11 @@ pub fn text(dark: bool) -> D2D1_COLOR_F {
 pub fn hover(dark: bool) -> D2D1_COLOR_F {
     let v = if dark { 1.0 } else { 0.0 };
     D2D1_COLOR_F { r: v, g: v, b: v, a: 0.06 }
+}
+
+pub fn border(dark: bool) -> D2D1_COLOR_F {
+    let v = if dark { 1.0 } else { 0.0 };
+    D2D1_COLOR_F { r: v, g: v, b: v, a: 0.12 }
 }
 
 /// The rule between grouped rows.
@@ -225,14 +262,13 @@ pub fn status_detail(status: crate::device::Status) -> Option<&'static str> {
     }
 }
 
-use crate::comp::Composition;
 use crate::device;
 use crate::icon;
 use crate::render::Renderer;
 use crate::theme;
 use std::cell::RefCell;
-use windows::core::{w, Result, BOOL, PCWSTR};
-use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::core::{w, Result, PCWSTR};
+use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, SIZE, WPARAM};
 use crate::geometry::Segment;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_BEZIER_SEGMENT, D2D1_COLOR_F as Color, D2D1_FIGURE_BEGIN_FILLED,
@@ -242,17 +278,15 @@ use windows::Win32::Graphics::Direct2D::{
     ID2D1Brush, ID2D1RenderTarget, D2D1_ELLIPSE, D2D1_ROUNDED_RECT,
 };
 use windows::Win32::Graphics::DirectWrite::{
-    IDWriteFactory, IDWriteTextFormat, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+    IDWriteTextFormat, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
     DWRITE_FONT_WEIGHT, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_WEIGHT_SEMI_BOLD,
     DWRITE_PARAGRAPH_ALIGNMENT_CENTER, DWRITE_TEXT_ALIGNMENT, DWRITE_TEXT_ALIGNMENT_CENTER,
     DWRITE_TEXT_ALIGNMENT_LEADING,
 };
-use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW, DWMWA_SYSTEMBACKDROP_TYPE,
-    DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
-};
 use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    CreateCompatibleDC, CreateDIBSection, DeleteDC, DeleteObject, GetMonitorInfoW,
+    MonitorFromPoint, SelectObject, AC_SRC_ALPHA, AC_SRC_OVER, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, BLENDFUNCTION, DIB_RGB_COLORS, MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
@@ -262,10 +296,10 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetCursorPos, LoadCursorW, PostMessageW, RegisterClassW,
-    SetForegroundWindow, SetWindowPos, ShowWindow, IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE,
-    SWP_NOACTIVATE, SWP_NOZORDER, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN,
-    WM_LBUTTONUP, WM_MOUSEMOVE, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP,
-    WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+    SetForegroundWindow, ShowWindow, UpdateLayeredWindow, IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE,
+    ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDOWN, WM_LBUTTONUP,
+    WM_MOUSEMOVE, WNDCLASSW, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    WS_POPUP,
 };
 use windows_numerics::Vector2;
 
@@ -298,18 +332,9 @@ struct Inner {
     scale: f32,
     pos: POINT,
     size: (i32, i32),
-    /// The DirectComposition pipeline for this window, built once at
-    /// creation and resized in place rather than recreated. A swapchain
-    /// shows exactly one frame per `Present`, so unlike the old layered
-    /// window's pre-rendered hover bitmaps, content is redrawn on demand.
-    comp: Composition,
-    /// Cloned once from the app's `Renderer` at creation, so a hover-only
-    /// repaint inside `wndproc` can build text formats without the renderer
-    /// being passed back in from `main.rs`.
-    dwrite: IDWriteFactory,
-    /// The state last painted, so a hover-only repaint can redraw the full
-    /// frame without the caller resupplying it.
-    state: device::State,
+    /// One pre-rendered frame per hover state, indexed by [`frame_index`], so
+    /// a hover repaint needs no renderer inside the window procedure.
+    frames: [Vec<u8>; 4],
     /// Set when `show()` fell back to `SetCapture` because
     /// `SetForegroundWindow` was denied by the foreground lock, so
     /// `WM_LBUTTONDOWN` knows to dismiss on an outside click.
@@ -334,60 +359,22 @@ pub struct Popup {
 }
 
 impl Popup {
-    /// Creates the (hidden) composition-backed window owned by `owner`, so
-    /// it is destroyed with it.
-    pub fn new(r: &Renderer, owner: HWND) -> Result<Popup> {
+    /// Creates the (hidden) layered window owned by `owner`, so it is
+    /// destroyed with it.
+    pub fn new(owner: HWND) -> Result<Popup> {
         unsafe {
             let instance: HINSTANCE = GetModuleHandleW(None)?.into();
             register_class(instance);
-            let (hwnd, w, h, scale) = create(instance, owner)?;
-
-            // DWM owns the background now (acrylic, rounded corners,
-            // shadow) — a transparent shadow margin can't coexist with
-            // DWMWA_SYSTEMBACKDROP_TYPE, which fills the whole window rect.
-            // Report each attribute's HRESULT instead of discarding it, so
-            // a rejection (e.g. an OS build without acrylic support) is
-            // visible instead of silently flattening the popup.
-            let backdrop = DWMSBT_TRANSIENTWINDOW;
-            if let Err(e) = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_SYSTEMBACKDROP_TYPE,
-                &backdrop as *const _ as *const _,
-                std::mem::size_of_val(&backdrop) as u32,
-            ) {
-                eprintln!("DWMWA_SYSTEMBACKDROP_TYPE failed: {e}");
-            }
-
-            let corner = DWMWCP_ROUND;
-            if let Err(e) = DwmSetWindowAttribute(
-                hwnd,
-                DWMWA_WINDOW_CORNER_PREFERENCE,
-                &corner as *const _ as *const _,
-                std::mem::size_of_val(&corner) as u32,
-            ) {
-                eprintln!("DWMWA_WINDOW_CORNER_PREFERENCE failed: {e}");
-            }
-
-            if let Err(e) = set_dark_mode(hwnd, theme::dark_apps()) {
-                eprintln!("DWMWA_USE_IMMERSIVE_DARK_MODE failed: {e}");
-            }
-
-            let comp = Composition::new(r, hwnd, w as u32, h as u32)?;
-
+            let hwnd = create(instance, owner)?;
             POPUP.with(|p| {
                 *p.borrow_mut() = Some(Inner {
                     owner,
                     visible: false,
                     hovered: None,
-                    scale,
+                    scale: 1.0,
                     pos: POINT::default(),
-                    size: (w, h),
-                    comp,
-                    dwrite: r.dwrite().clone(),
-                    state: device::State {
-                        status: device::Status::Disconnected,
-                        layers: Default::default(),
-                    },
+                    size: (0, 0),
+                    frames: Default::default(),
                     captured: false,
                 });
             });
@@ -404,8 +391,8 @@ impl Popup {
         })
     }
 
-    /// Paints the popup for `state`, places the window on the monitor under
-    /// the cursor and shows it. Called again while it is already up it
+    /// Paints every hover frame for `state`, places the window on the monitor
+    /// under the cursor and shows it. Called again while it is already up it
     /// repaints in place, keeping its position and hovered row, so a layer
     /// change does not yank the window over to the pointer.
     pub fn show(&mut self, r: &Renderer, state: device::State) -> Result<()> {
@@ -440,50 +427,29 @@ impl Popup {
                 None => (cursor_scale, None),
             };
 
-            let w = (WIDTH * scale).round() as i32;
-            let h = (HEIGHT * scale).round() as i32;
+            let frames = [
+                paint(r, state, None, scale)?,
+                paint(r, state, Some(Row::Status), scale)?,
+                paint(r, state, Some(Row::Layer), scale)?,
+                paint(r, state, Some(Row::Quit), scale)?,
+            ];
+            let (w, h) = (frames[0].1, frames[0].2);
             let pos = match open {
                 Some((pos, _, _)) => pos,
-                None => place(cursor, work, w, h),
+                None => place(cursor, work, w, h, scale),
             };
-
-            if open.is_none() {
-                // Reposition/resize for whatever monitor's DPI is under the
-                // cursor this time; a no-op the first time, since `create`
-                // already sized the window to match.
-                let _ = SetWindowPos(
-                    self.hwnd,
-                    None,
-                    pos.x,
-                    pos.y,
-                    w,
-                    h,
-                    SWP_NOZORDER | SWP_NOACTIVATE,
-                );
-            }
-
-            // Re-tint the acrylic for the current theme. DWM does not track
-            // this on its own for a window it isn't otherwise chroming, so
-            // it must be re-applied on every show, including a reshow
-            // triggered by a theme change.
-            if let Err(e) = set_dark_mode(self.hwnd, theme::dark_apps()) {
-                eprintln!("DWMWA_USE_IMMERSIVE_DARK_MODE failed: {e}");
-            }
 
             // The borrow ends before ShowWindow/SetForegroundWindow, which
             // dispatch messages straight back into `wndproc`.
             POPUP.with(|p| {
                 if let Some(i) = p.borrow_mut().as_mut() {
-                    if open.is_none() {
-                        let _ = i.comp.resize(w as u32, h as u32);
-                    }
-                    let _ = i.comp.draw(|dc| paint(dc, r.dwrite(), state, hovered, scale));
+                    i.frames = frames.map(|f| f.0);
                     i.scale = scale;
                     i.pos = pos;
                     i.size = (w, h);
                     i.hovered = hovered;
-                    i.state = state;
                     i.visible = true;
+                    let _ = push(self.hwnd, &i.frames[frame_index(hovered)], w, h, pos);
                 }
             });
 
@@ -541,40 +507,22 @@ fn register_class(instance: HINSTANCE) {
     });
 }
 
-/// Creates the window and returns its handle plus the physical pixel size
-/// (and the dpi scale that produced it) it was created at.
-fn create(instance: HINSTANCE, owner: HWND) -> Result<(HWND, i32, i32, f32)> {
+fn create(instance: HINSTANCE, owner: HWND) -> Result<HWND> {
     unsafe {
         let scale = GetDpiForWindow(owner).max(96) as f32 / 96.0;
-        let w = (WIDTH * scale) as i32;
-        let h = (HEIGHT * scale) as i32;
-        let hwnd = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
+        CreateWindowExW(
+            WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
             CLASS,
             CLASS,
             WS_POPUP,
             0,
             0,
-            w,
-            h,
+            ((WIDTH + SHADOW_MARGIN * 2.0) * scale) as i32,
+            ((HEIGHT + SHADOW_MARGIN * 2.0) * scale) as i32,
             Some(owner),
             None,
             Some(instance),
             None,
-        )?;
-        Ok((hwnd, w, h, scale))
-    }
-}
-
-/// Tints the acrylic backdrop for the current app theme.
-fn set_dark_mode(hwnd: HWND, dark: bool) -> Result<()> {
-    let value = BOOL::from(dark);
-    unsafe {
-        DwmSetWindowAttribute(
-            hwnd,
-            DWMWA_USE_IMMERSIVE_DARK_MODE,
-            &value as *const _ as *const _,
-            std::mem::size_of::<BOOL>() as u32,
         )
     }
 }
@@ -604,11 +552,11 @@ fn row_rect(row: Row, scale: f32) -> D2D_RECT_F {
     let index = frame_index(Some(row)) as f32 - 1.0;
     // Quit sits below the separator between it and Layer.
     let extra = if row == Row::Quit { SEPARATOR_H } else { 0.0 };
-    let top = (PADDING + index * ROW_HEIGHT + extra) * scale;
+    let top = (SHADOW_MARGIN + PADDING + index * ROW_HEIGHT + extra) * scale;
     D2D_RECT_F {
-        left: 0.0,
+        left: SHADOW_MARGIN * scale,
         top,
-        right: WIDTH * scale,
+        right: (SHADOW_MARGIN + WIDTH) * scale,
         bottom: top + ROW_HEIGHT * scale,
     }
 }
@@ -681,14 +629,47 @@ fn draw_icon(
     }
 }
 
+/// Approximates a soft drop shadow with concentric rounded rects of ramping
+/// alpha, since this app has no D3D11 device to run a real D2D blur effect
+/// through. Offset down slightly for a light-from-above look. Drawn before
+/// the panel so the panel's own fill covers the inner steps.
+fn draw_shadow(rt: &ID2D1RenderTarget, w: f32, h: f32, s: f32) -> Result<()> {
+    const STEPS: i32 = 12;
+    let offset_y = 2.0 * s;
+    for i in 0..STEPS {
+        let inset_amt = i as f32 * SHADOW_MARGIN * s / STEPS as f32;
+        let remaining = SHADOW_MARGIN * s - inset_amt;
+        let rect = D2D_RECT_F {
+            left: inset_amt,
+            top: inset_amt + offset_y,
+            right: w - inset_amt,
+            bottom: h - inset_amt + offset_y,
+        };
+        let t = i as f32 / (STEPS - 1) as f32;
+        let color = D2D1_COLOR_F { r: 0.0, g: 0.0, b: 0.0, a: 0.06 * t * t };
+        unsafe {
+            let brush = rt.CreateSolidColorBrush(&color, None)?;
+            rt.FillRoundedRectangle(
+                &D2D1_ROUNDED_RECT {
+                    rect,
+                    radiusX: CORNER * s + remaining,
+                    radiusY: CORNER * s + remaining,
+                },
+                &brush,
+            );
+        }
+    }
+    Ok(())
+}
+
 fn format(
-    dwrite: &IDWriteFactory,
+    r: &Renderer,
     size: f32,
     weight: DWRITE_FONT_WEIGHT,
     align: DWRITE_TEXT_ALIGNMENT,
 ) -> Result<IDWriteTextFormat> {
     unsafe {
-        let f = dwrite.CreateTextFormat(
+        let f = r.dwrite().CreateTextFormat(
             FONT,
             None,
             weight,
@@ -716,21 +697,43 @@ fn draw_text(
     }
 }
 
-/// Draws the popup's content — hover highlight, separator, rows and accent
-/// pill — onto the transparent background `Composition::draw` provides. DWM
-/// supplies the acrylic surface, rounded corners and shadow, so there is no
-/// panel fill, border or shadow to paint here.
+/// Renders one frame of the popup. Returns premultiplied BGRA plus its pixel
+/// dimensions.
 fn paint(
-    rt: &ID2D1RenderTarget,
-    dwrite: &IDWriteFactory,
+    r: &Renderer,
     state: device::State,
     hovered: Option<Row>,
     scale: f32,
-) -> Result<()> {
+) -> Result<(Vec<u8>, i32, i32)> {
+    let w = ((WIDTH + SHADOW_MARGIN * 2.0) * scale).round() as i32;
+    let h = ((HEIGHT + SHADOW_MARGIN * 2.0) * scale).round() as i32;
     let dark = theme::dark_apps();
     let s = scale;
 
-    unsafe {
+    let bgra = r.render_bgra(w as u32, h as u32, |rt| unsafe {
+        draw_shadow(rt, w as f32, h as f32, s)?;
+
+        // Surface and border. Half a stroke of inset keeps the border inside
+        // the panel's own edge instead of half-clipped by it. The panel
+        // itself is inset from the bitmap edge by the shadow margin.
+        let panel = D2D1_ROUNDED_RECT {
+            rect: inset(
+                D2D_RECT_F {
+                    left: SHADOW_MARGIN * s,
+                    top: SHADOW_MARGIN * s,
+                    right: w as f32 - SHADOW_MARGIN * s,
+                    bottom: h as f32 - SHADOW_MARGIN * s,
+                },
+                s / 2.0,
+            ),
+            radiusX: CORNER * s,
+            radiusY: CORNER * s,
+        };
+        let fill = rt.CreateSolidColorBrush(&surface(dark), None)?;
+        rt.FillRoundedRectangle(&panel, &fill);
+        let edge = rt.CreateSolidColorBrush(&border(dark), None)?;
+        rt.DrawRoundedRectangle(&panel, &edge, s, None);
+
         if let Some(row) = hovered {
             let rr = D2D1_ROUNDED_RECT {
                 rect: inset(row_rect(row, s), HOVER_INSET * s),
@@ -759,12 +762,12 @@ fn paint(
         match status_detail(state.status) {
             None => {
                 let f =
-                    format(dwrite, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
+                    format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
                 draw_text(rt, status_label(state.status), &f, body, &ink);
             }
             Some(detail) => {
                 let f =
-                    format(dwrite, 13.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
+                    format(r, 13.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
                 draw_text(
                     rt,
                     status_label(state.status),
@@ -776,7 +779,7 @@ fn paint(
                 faint.a *= 0.6;
                 let brush = rt.CreateSolidColorBrush(&faint, None)?;
                 let f =
-                    format(dwrite, 11.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
+                    format(r, 11.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
                 draw_text(rt, detail, &f, D2D_RECT_F { top: middle, ..body }, &brush);
             }
         }
@@ -791,7 +794,7 @@ fn paint(
             icon_rect(row, s),
             &ink,
         )?;
-        let f = format(dwrite, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
+        let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
         draw_text(
             rt,
             &state.layers.label(),
@@ -838,7 +841,7 @@ fn paint(
             );
             let white = rt.CreateSolidColorBrush(&WHITE, None)?;
             let f = format(
-                dwrite,
+                r,
                 12.0 * s,
                 DWRITE_FONT_WEIGHT_SEMI_BOLD,
                 DWRITE_TEXT_ALIGNMENT_CENTER,
@@ -860,7 +863,7 @@ fn paint(
         // Quit row.
         let row = row_rect(Row::Quit, s);
         draw_icon(rt, icon::POWER_PATH, icon::POWER_VIEWBOX, icon_rect(row, s), &ink)?;
-        let f = format(dwrite, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
+        let f = format(r, 14.0 * s, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_LEADING)?;
         draw_text(
             rt,
             "Quit",
@@ -873,6 +876,57 @@ fn paint(
             &ink,
         );
         Ok(())
+    })?;
+
+    Ok((bgra, w, h))
+}
+
+/// Blits one frame onto the layered window, moving and sizing it to match.
+fn push(hwnd: HWND, bgra: &[u8], w: i32, h: i32, pos: POINT) -> Result<()> {
+    unsafe {
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                // Negative height makes the DIB top-down, matching our buffer.
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let dib = CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0)?;
+        std::ptr::copy_nonoverlapping(bgra.as_ptr(), bits as *mut u8, bgra.len());
+
+        let dc = CreateCompatibleDC(None);
+        let old = SelectObject(dc, dib.into());
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        let size = SIZE { cx: w, cy: h };
+        let src = POINT { x: 0, y: 0 };
+        let result = UpdateLayeredWindow(
+            hwnd,
+            None,
+            Some(&pos),
+            Some(&size),
+            Some(dc),
+            Some(&src),
+            COLORREF(0),
+            Some(&blend),
+            ULW_ALPHA,
+        );
+
+        SelectObject(dc, old);
+        let _ = DeleteDC(dc);
+        let _ = DeleteObject(dib.into());
+        result
     }
 }
 
@@ -896,9 +950,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let row = row_at(y / i.scale);
                 if row != i.hovered {
                     i.hovered = row;
-                    let dwrite = i.dwrite.clone();
-                    let (state, scale) = (i.state, i.scale);
-                    let _ = i.comp.draw(|dc| paint(dc, &dwrite, state, row, scale));
+                    let (w, h) = i.size;
+                    let _ = push(hwnd, &i.frames[frame_index(row)], w, h, i.pos);
                 }
             });
             LRESULT(0)
@@ -909,9 +962,8 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
                 let Some(i) = b.as_mut() else { return };
                 if i.hovered.is_some() {
                     i.hovered = None;
-                    let dwrite = i.dwrite.clone();
-                    let (state, scale) = (i.state, i.scale);
-                    let _ = i.comp.draw(|dc| paint(dc, &dwrite, state, None, scale));
+                    let (w, h) = i.size;
+                    let _ = push(hwnd, &i.frames[frame_index(None)], w, h, i.pos);
                 }
             });
             LRESULT(0)

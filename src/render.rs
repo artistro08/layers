@@ -8,9 +8,8 @@ use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_PIXEL_FORMAT,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Factory, ID2D1Factory1, ID2D1RenderTarget,
-    D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1_RENDER_TARGET_PROPERTIES,
-    D2D1_RENDER_TARGET_TYPE_DEFAULT,
+    D2D1CreateFactory, ID2D1Factory, ID2D1RenderTarget, D2D1_FACTORY_TYPE_SINGLE_THREADED,
+    D2D1_RENDER_TARGET_PROPERTIES, D2D1_RENDER_TARGET_TYPE_DEFAULT,
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, DWRITE_FACTORY_TYPE_SHARED,
@@ -23,7 +22,7 @@ use windows::Win32::Graphics::Imaging::{
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 
 pub struct Renderer {
-    d2d: ID2D1Factory1,
+    d2d: ID2D1Factory,
     dwrite: IDWriteFactory,
     wic: IWICImagingFactory,
 }
@@ -33,10 +32,7 @@ impl Renderer {
     /// via `CoInitializeEx`); otherwise this returns `CO_E_NOTINITIALIZED`.
     pub fn new() -> Result<Self> {
         unsafe {
-            // ID2D1Factory1 (rather than the plain ID2D1Factory the WIC path
-            // still uses) is what CreateDevice needs to build the D2D
-            // device context the composition swapchain paints through.
-            let d2d: ID2D1Factory1 =
+            let d2d: ID2D1Factory =
                 D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
             let dwrite: IDWriteFactory = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
             let wic: IWICImagingFactory =
@@ -45,13 +41,7 @@ impl Renderer {
         }
     }
 
-    /// Hands out the base `ID2D1Factory` interface for callers (the WIC
-    /// render-target path) that don't need the `1` extensions.
     pub fn d2d(&self) -> &ID2D1Factory {
-        &self.d2d
-    }
-
-    pub fn d2d_factory1(&self) -> &ID2D1Factory1 {
         &self.d2d
     }
 
