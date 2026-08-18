@@ -49,6 +49,125 @@ pub fn verify_crc(packet: &[u8]) -> bool {
     crc_of(packet) == claimed
 }
 
+pub const NEXPRESSIONS: usize = 8;
+
+/// Vendor-defined usage the injected expression reports the layer mask under.
+/// Cannot collide with a real input usage.
+pub const SENTINEL_USAGE: u32 = 0xFF00_0001;
+
+const OP_PUSH_USAGE: u8 = 1;
+const OP_LAYER_STATE: u8 = 20;
+const OP_MONITOR: u8 = 44;
+
+/// `layer_state 0xFF000001 monitor` — three elements, seven bytes.
+///
+/// The firmware's validator accepts it: `layer_state` and `push_usage` each
+/// push one value, `monitor` requires two and consumes two, leaving the stack
+/// balanced.
+pub const EXPR_BYTES: [u8; 7] = [
+    OP_LAYER_STATE,
+    OP_PUSH_USAGE,
+    SENTINEL_USAGE as u8,
+    (SENTINEL_USAGE >> 8) as u8,
+    (SENTINEL_USAGE >> 16) as u8,
+    (SENTINEL_USAGE >> 24) as u8,
+    OP_MONITOR,
+];
+
+const EXPR_NELEMS: u8 = 3;
+
+pub fn get_expression(slot: u8) -> [u8; PACKET_LEN] {
+    let mut payload = [0u8; 8];
+    payload[..4].copy_from_slice(&(slot as u32).to_le_bytes());
+    // Element offset. We only ever read from the start of a slot.
+    payload[4..].copy_from_slice(&0u32.to_le_bytes());
+    build_packet(CMD_GET_EXPRESSION, &payload)
+}
+
+pub fn append_expression(slot: u8) -> [u8; PACKET_LEN] {
+    let mut payload = [0u8; 2 + EXPR_BYTES.len()];
+    payload[0] = slot;
+    payload[1] = EXPR_NELEMS;
+    payload[2..].copy_from_slice(&EXPR_BYTES);
+    build_packet(CMD_APPEND_TO_EXPRESSION, &payload)
+}
+
+/// Required after appending. `eval_expr` refuses to run an expression whose
+/// `expression_valid` flag is unset, and only `RESUME` reaches the code that
+/// sets it. Without this the expression is silently inert.
+pub fn resume() -> [u8; PACKET_LEN] {
+    build_packet(CMD_RESUME, &[])
+}
+
+pub fn set_monitor_enabled(on: bool) -> [u8; PACKET_LEN] {
+    build_packet(CMD_SET_MONITOR_ENABLED, &[on as u8])
+}
+
+/// One expression slot as the firmware reports it: an element count and the
+/// encoded element byte stream.
+#[derive(Clone, Copy)]
+pub struct SlotContents {
+    pub nelems: u8,
+    pub bytes: [u8; 27],
+}
+
+impl SlotContents {
+    fn is_ours(&self) -> bool {
+        self.nelems == EXPR_NELEMS && self.bytes[..EXPR_BYTES.len()] == EXPR_BYTES
+    }
+}
+
+/// Response layout is report id, element count, 27 bytes of elements, CRC.
+pub fn parse_expression_response(packet: &[u8]) -> Option<SlotContents> {
+    if !verify_crc(packet) {
+        return None;
+    }
+    let mut bytes = [0u8; 27];
+    bytes.copy_from_slice(&packet[2..29]);
+    Some(SlotContents { nelems: packet[1], bytes })
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum SlotChoice {
+    /// Our expression is already here from a previous run. Reuse it.
+    Existing(u8),
+    /// Free slot to append into.
+    Empty(u8),
+    /// All eight slots belong to the user. The layer cannot be read.
+    NoneFree,
+}
+
+/// Reusing our own slot matters: without it every app restart would consume
+/// another slot and eight restarts would exhaust the device.
+pub fn choose_slot(slots: &[SlotContents]) -> SlotChoice {
+    if let Some(i) = slots.iter().position(SlotContents::is_ours) {
+        return SlotChoice::Existing(i as u8);
+    }
+    match slots.iter().position(|s| s.nelems == 0) {
+        Some(i) => SlotChoice::Empty(i as u8),
+        None => SlotChoice::NoneFree,
+    }
+}
+
+pub const CMD_GET_CONFIG: u8 = 3;
+
+pub fn get_config() -> [u8; PACKET_LEN] {
+    build_packet(CMD_GET_CONFIG, &[])
+}
+
+/// The firmware's config version, from byte 1 of a GET_CONFIG response.
+///
+/// Every opcode number, report id and command byte this app relies on is tied
+/// to a specific protocol version. A mismatch is surfaced rather than guessed
+/// at, because guessing wrong means writing an expression the firmware would
+/// interpret as something else entirely.
+pub fn parse_config_version(packet: &[u8]) -> Option<u8> {
+    if !verify_crc(packet) {
+        return None;
+    }
+    Some(packet[1])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,5 +217,140 @@ mod tests {
     #[should_panic]
     fn oversized_payload_panics() {
         build_packet(CMD_RESUME, &[0u8; 27]);
+    }
+
+    #[test]
+    fn expression_bytes_are_layer_state_push_sentinel_monitor() {
+        assert_eq!(EXPR_BYTES, [20u8, 1, 0x01, 0x00, 0x00, 0xFF, 44]);
+    }
+
+    #[test]
+    fn sentinel_in_expression_matches_the_monitor_filter_constant() {
+        let encoded = u32::from_le_bytes(EXPR_BYTES[2..6].try_into().unwrap());
+        assert_eq!(encoded, SENTINEL_USAGE);
+    }
+
+    #[test]
+    fn append_packet_carries_slot_then_nelems_then_element_bytes() {
+        let p = append_expression(5);
+        assert_eq!(p[2], CMD_APPEND_TO_EXPRESSION);
+        assert_eq!(p[3], 5, "slot index");
+        assert_eq!(p[4], 3, "three elements, not seven bytes");
+        assert_eq!(&p[5..12], &EXPR_BYTES);
+        assert!(p[12..29].iter().all(|&b| b == 0));
+        assert!(verify_crc(&p));
+    }
+
+    #[test]
+    fn get_expression_packet_carries_slot_and_zero_element_offset() {
+        let p = get_expression(6);
+        assert_eq!(p[2], CMD_GET_EXPRESSION);
+        assert_eq!(u32::from_le_bytes(p[3..7].try_into().unwrap()), 6);
+        assert_eq!(u32::from_le_bytes(p[7..11].try_into().unwrap()), 0);
+    }
+
+    #[test]
+    fn monitor_enable_and_disable_differ_only_in_the_payload_byte() {
+        assert_eq!(set_monitor_enabled(true)[3], 1);
+        assert_eq!(set_monitor_enabled(false)[3], 0);
+        assert_eq!(set_monitor_enabled(true)[2], CMD_SET_MONITOR_ENABLED);
+    }
+
+    #[test]
+    fn resume_packet_has_an_empty_payload() {
+        let p = resume();
+        assert_eq!(p[2], CMD_RESUME);
+        assert!(p[3..29].iter().all(|&b| b == 0));
+    }
+
+    /// Builds a well-formed GET_EXPRESSION response the way the firmware would:
+    /// report id, element count, 27 element bytes, CRC.
+    fn expr_response(nelems: u8, bytes: &[u8]) -> [u8; PACKET_LEN] {
+        let mut p = [0u8; PACKET_LEN];
+        p[0] = REPORT_ID_CONFIG;
+        p[1] = nelems;
+        p[2..2 + bytes.len()].copy_from_slice(bytes);
+        let crc = crc32fast::hash(&p[1..29]);
+        p[29..].copy_from_slice(&crc.to_le_bytes());
+        p
+    }
+
+    #[test]
+    fn parses_an_empty_slot_response() {
+        let r = parse_expression_response(&expr_response(0, &[])).unwrap();
+        assert_eq!(r.nelems, 0);
+    }
+
+    #[test]
+    fn parses_our_own_expression_back_out() {
+        let r = parse_expression_response(&expr_response(3, &EXPR_BYTES)).unwrap();
+        assert_eq!(r.nelems, 3);
+        assert_eq!(&r.bytes[..7], &EXPR_BYTES);
+    }
+
+    #[test]
+    fn rejects_a_response_with_a_bad_crc() {
+        let mut p = expr_response(3, &EXPR_BYTES);
+        p[4] ^= 0xFF;
+        assert!(parse_expression_response(&p).is_none());
+    }
+
+    fn slot(nelems: u8, bytes: &[u8]) -> SlotContents {
+        let mut b = [0u8; 27];
+        b[..bytes.len()].copy_from_slice(bytes);
+        SlotContents { nelems, bytes: b }
+    }
+
+    #[test]
+    fn reuses_our_slot_even_when_an_earlier_slot_is_empty() {
+        let slots = [slot(0, &[]), slot(3, &EXPR_BYTES)];
+        assert_eq!(choose_slot(&slots), SlotChoice::Existing(1));
+    }
+
+    #[test]
+    fn takes_the_first_empty_slot_when_ours_is_absent() {
+        let slots = [slot(5, &[20, 20, 20]), slot(0, &[]), slot(0, &[])];
+        assert_eq!(choose_slot(&slots), SlotChoice::Empty(1));
+    }
+
+    #[test]
+    fn reports_none_free_when_every_slot_is_occupied_by_someone_else() {
+        let slots: Vec<_> = (0..8).map(|_| slot(2, &[20, 44])).collect();
+        assert_eq!(choose_slot(&slots), SlotChoice::NoneFree);
+    }
+
+    #[test]
+    fn does_not_mistake_a_longer_expression_that_merely_starts_like_ours() {
+        let mut bytes = EXPR_BYTES.to_vec();
+        bytes.push(20);
+        let slots = [slot(4, &bytes), slot(0, &[])];
+        assert_eq!(choose_slot(&slots), SlotChoice::Empty(1));
+    }
+
+    /// A GET_CONFIG response carries the firmware's config version in byte 1.
+    fn config_response(version: u8) -> [u8; PACKET_LEN] {
+        let mut p = [0u8; PACKET_LEN];
+        p[0] = REPORT_ID_CONFIG;
+        p[1] = version;
+        let crc = crc32fast::hash(&p[1..29]);
+        p[29..].copy_from_slice(&crc.to_le_bytes());
+        p
+    }
+
+    #[test]
+    fn reads_the_config_version_out_of_a_response() {
+        assert_eq!(parse_config_version(&config_response(18)), Some(18));
+    }
+
+    #[test]
+    fn reports_a_mismatched_version_rather_than_assuming_eighteen() {
+        assert_eq!(parse_config_version(&config_response(19)), Some(19));
+    }
+
+    #[test]
+    fn rejects_a_config_response_with_a_bad_crc() {
+        let mut p = config_response(18);
+        p[1] = 19;
+        assert_eq!(parse_config_version(&p), None);
     }
 }
