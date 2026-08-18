@@ -28,6 +28,8 @@ pub struct Renderer {
 }
 
 impl Renderer {
+    /// Requires COM to already be initialized on the calling thread (e.g.
+    /// via `CoInitializeEx`); otherwise this returns `CO_E_NOTINITIALIZED`.
     pub fn new() -> Result<Self> {
         unsafe {
             let d2d: ID2D1Factory =
