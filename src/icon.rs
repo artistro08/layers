@@ -174,9 +174,12 @@ fn bgra_to_hicon(bgra: &[u8], size: usize) -> Result<HICON> {
             hbmMask: mask,
             ..Default::default()
         };
-        let icon = CreateIconIndirect(&ii)?;
+        // CreateIconIndirect copies its bitmaps, so both are deleted
+        // unconditionally afterward, on the error path too, to avoid
+        // leaking a color DIB and mask bitmap per failed call.
+        let icon = CreateIconIndirect(&ii);
         let _ = DeleteObject(color.into());
         let _ = DeleteObject(mask.into());
-        Ok(icon)
+        icon
     }
 }

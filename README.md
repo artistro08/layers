@@ -21,7 +21,7 @@ status but cannot read the layer.
 
 ## Building
 
-Requires the Rust MSVC toolchain, and Inno Setup 6 for the installer.
+Requires the Rust MSVC toolchain, and Inno Setup 6.3 or later for the installer.
 
     cargo build --release
     & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\layers.iss

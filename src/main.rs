@@ -146,12 +146,19 @@ fn taskbar_dpi(hwnd: HWND) -> u32 {
 /// Rebuilds the tray icon and tooltip from current state and theme.
 fn refresh(hwnd: HWND) {
     APP.with(|a| {
-        let mut borrow = a.borrow_mut();
+        // refresh() can re-enter while this borrow is still live: Tray::set
+        // below blocks in a cross-process SendMessage (NIM_MODIFY), and the
+        // shell's WM_SETTINGCHANGE broadcast is dispatched to this thread's
+        // wndproc while it's blocked, routing straight back into refresh().
+        // A plain borrow_mut() would panic (abort, since this is an
+        // extern "system" fn) on that reentrant call. Match popup.rs's
+        // try_borrow style: bail, the outer call already has current state.
+        let Ok(mut borrow) = a.try_borrow_mut() else { return };
         let Some(app) = borrow.as_mut() else { return };
 
         let dpi = taskbar_dpi(hwnd);
         // 16 at 100%, 20 at 125%, 24 at 150%, 32 at 200%. Rounded up to a
-        // multiple of 4 so the supersampled buffer divides cleanly.
+        // multiple of 4 to keep the tray icon size on a clean pixel grid.
         let size = (16 * dpi as usize / 96).next_multiple_of(4);
 
         let connected = app.state.status == device::Status::Connected;
@@ -246,7 +253,12 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) 
         }
         WM_DESTROY => {
             APP.with(|a| {
-                if let Some(mut app) = a.borrow_mut().take() {
+                // Same reentrancy hazard as refresh(): app.tray.remove()
+                // below blocks in NIM_DELETE's cross-process SendMessage,
+                // during which a WM_SETTINGCHANGE broadcast can re-enter
+                // this wndproc and try to borrow APP again.
+                let Ok(mut borrow) = a.try_borrow_mut() else { return };
+                if let Some(mut app) = borrow.take() {
                     app.tray.remove();
                     if let Some(h) = app.device.take() {
                         h.shutdown();
