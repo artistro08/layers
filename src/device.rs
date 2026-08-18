@@ -4,6 +4,7 @@
 //! sequence, and blocks on reads. Never touches UI state directly.
 
 use crate::protocol::{self, Layers};
+use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -45,6 +46,31 @@ impl Handle {
     }
 }
 
+/// Why a connect-and-read cycle ended. Carries the real hidapi error, or a
+/// short message for failures with no underlying error (collection not
+/// found, retry give-up), so a failure is diagnosable from stderr alone
+/// instead of a silent reconnect loop.
+#[derive(Debug)]
+enum DeviceError {
+    Hid(hidapi::HidError),
+    Other(&'static str),
+}
+
+impl fmt::Display for DeviceError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeviceError::Hid(e) => write!(f, "{e}"),
+            DeviceError::Other(s) => write!(f, "{s}"),
+        }
+    }
+}
+
+impl From<hidapi::HidError> for DeviceError {
+    fn from(e: hidapi::HidError) -> Self {
+        DeviceError::Hid(e)
+    }
+}
+
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 /// Long enough that an idle device does not spin the CPU, short enough that
 /// quit stays responsive.
@@ -62,14 +88,33 @@ fn run(stop: Arc<AtomicBool>, on_change: impl Fn(State)) {
     on_change(last);
 
     while !stop.load(Ordering::Relaxed) {
-        if session(&stop, &mut last, &on_change).is_err() && last.status != Status::Disconnected {
-            last = State { status: Status::Disconnected, layers: Layers(1) };
-            on_change(last);
+        if let Err(e) = session(&stop, &mut last, &on_change) {
+            eprintln!("device session failed: {e}");
+            if last.status != Status::Disconnected {
+                last = State { status: Status::Disconnected, layers: Layers(1) };
+                on_change(last);
+            }
         }
         if !stop.load(Ordering::Relaxed) {
-            thread::sleep(RECONNECT_DELAY);
+            nap(&stop, RECONNECT_DELAY);
         }
     }
+}
+
+/// Sleeps in short slices so a shutdown request is observed promptly.
+/// Returns true if the stop flag was set while waiting.
+fn nap(stop: &AtomicBool, total: Duration) -> bool {
+    const SLICE: Duration = Duration::from_millis(100);
+    let mut left = total;
+    while !left.is_zero() {
+        if stop.load(Ordering::Relaxed) {
+            return true;
+        }
+        let step = left.min(SLICE);
+        thread::sleep(step);
+        left -= step;
+    }
+    stop.load(Ordering::Relaxed)
 }
 
 /// One connect-and-read cycle. Returns Err on any device failure so the caller
@@ -79,16 +124,16 @@ fn session(
     stop: &AtomicBool,
     last: &mut State,
     on_change: &impl Fn(State),
-) -> Result<(), ()> {
-    let api = hidapi::HidApi::new().map_err(|_| ())?;
+) -> Result<(), DeviceError> {
+    let api = hidapi::HidApi::new()?;
 
     let info = api
         .device_list()
         .find(|d| {
             d.usage_page() == protocol::CONFIG_USAGE_PAGE && d.usage() == protocol::CONFIG_USAGE
         })
-        .ok_or(())?;
-    let dev = info.open_device(&api).map_err(|_| ())?;
+        .ok_or(DeviceError::Other("config collection not found"))?;
+    let dev = info.open_device(&api)?;
 
     // The monitor input reports live in a second top-level collection that
     // Windows exposes as its own device path, so they need their own handle.
@@ -104,39 +149,36 @@ fn session(
                 && d.serial_number() == info.serial_number()
                 && d.interface_number() == info.interface_number()
         })
-        .ok_or(())?;
-    let monitor_dev = monitor_info.open_device(&api).map_err(|_| ())?;
+        .ok_or(DeviceError::Other("monitor collection not found"))?;
+    let monitor_dev = monitor_info.open_device(&api)?;
 
     // Version gate. Nothing is written to the device until the firmware
     // confirms it speaks the protocol version these opcodes belong to.
-    dev.send_feature_report(&protocol::get_config())
-        .map_err(|_| ())?;
-    let version = read_response(&dev, protocol::parse_config_version)?;
+    dev.send_feature_report(&protocol::get_config())?;
+    let version = read_response(stop, &dev, protocol::parse_config_version)?;
     if version != protocol::CONFIG_VERSION {
         *last = State { status: Status::VersionMismatch, layers: Layers(1) };
         on_change(*last);
         // Hold the handle open so the loop does not spin re-enumerating.
         while !stop.load(Ordering::Relaxed) {
-            thread::sleep(RECONNECT_DELAY);
+            nap(stop, RECONNECT_DELAY);
         }
         return Ok(());
     }
 
-    let status = match claim_slot(&dev)? {
+    let status = match claim_slot(stop, &dev)? {
         protocol::SlotChoice::NoneFree => Status::NoSlot,
         protocol::SlotChoice::Existing(_) => Status::Connected,
         protocol::SlotChoice::Empty(slot) => {
-            dev.send_feature_report(&protocol::append_expression(slot))
-                .map_err(|_| ())?;
+            dev.send_feature_report(&protocol::append_expression(slot))?;
             // Required. Without RESUME the firmware never marks the expression
             // valid and eval_expr silently returns zero forever.
-            dev.send_feature_report(&protocol::resume()).map_err(|_| ())?;
+            dev.send_feature_report(&protocol::resume())?;
             Status::Connected
         }
     };
 
-    dev.send_feature_report(&protocol::set_monitor_enabled(true))
-        .map_err(|_| ())?;
+    dev.send_feature_report(&protocol::set_monitor_enabled(true))?;
 
     *last = State { status, layers: Layers(1) };
     on_change(*last);
@@ -145,6 +187,7 @@ fn session(
     while !stop.load(Ordering::Relaxed) {
         match monitor_dev.read_timeout(&mut buf, READ_TIMEOUT_MS) {
             Ok(0) => continue, // timeout, the device is simply idle
+            Ok(n) if n < protocol::MONITOR_REPORT_LEN => continue, // truncated report
             Ok(_) => {
                 if let Some(layers) = protocol::parse_monitor_report(&buf) {
                     if layers != last.layers {
@@ -153,7 +196,7 @@ fn session(
                     }
                 }
             }
-            Err(_) => return Err(()),
+            Err(e) => return Err(e.into()),
         }
     }
 
@@ -165,12 +208,11 @@ fn session(
 }
 
 /// Reads all eight expression slots and decides which to use.
-fn claim_slot(dev: &hidapi::HidDevice) -> Result<protocol::SlotChoice, ()> {
+fn claim_slot(stop: &AtomicBool, dev: &hidapi::HidDevice) -> Result<protocol::SlotChoice, DeviceError> {
     let mut slots = Vec::with_capacity(protocol::NEXPRESSIONS);
     for slot in 0..protocol::NEXPRESSIONS as u8 {
-        dev.send_feature_report(&protocol::get_expression(slot))
-            .map_err(|_| ())?;
-        slots.push(read_response(dev, protocol::parse_expression_response)?);
+        dev.send_feature_report(&protocol::get_expression(slot))?;
+        slots.push(read_response(stop, dev, protocol::parse_expression_response)?);
     }
     Ok(protocol::choose_slot(&slots))
 }
@@ -180,9 +222,10 @@ fn claim_slot(dev: &hidapi::HidDevice) -> Result<protocol::SlotChoice, ()> {
 /// The firmware answers asynchronously, so a read issued too soon comes back
 /// short. Retry with a doubling delay, as the official config tool does.
 fn read_response<T>(
+    stop: &AtomicBool,
     dev: &hidapi::HidDevice,
     parse: impl Fn(&[u8]) -> Option<T>,
-) -> Result<T, ()> {
+) -> Result<T, DeviceError> {
     let mut delay = Duration::from_millis(2);
     for _ in 0..10 {
         let mut buf = [0u8; protocol::PACKET_LEN];
@@ -194,8 +237,10 @@ fn read_response<T>(
                 }
             }
         }
-        thread::sleep(delay);
+        if nap(stop, delay) {
+            break;
+        }
         delay *= 2;
     }
-    Err(())
+    Err(DeviceError::Other("no valid response after 10 retries"))
 }
