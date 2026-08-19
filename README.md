@@ -12,6 +12,12 @@ The tray icon shows the layer you are on. Switch layers on your peripheral and i
 
 Native Rust on Win32 and Direct2D — one 1.1 MB executable, no runtime dependencies.
 
+## Demo
+
+https://github.com/artistro08/layers/releases/download/v1.0.0/layers-demo.mp4
+
+<video src="https://github.com/artistro08/layers/releases/download/v1.0.0/layers-demo.mp4" controls width="720"></video>
+
 ## Install
 
 Download `layers-setup.exe` from the [latest release](../../releases/latest) and run it. Per-user, so no UAC prompt. Plug in a flashed HID Remapper and it works — nothing to configure.
