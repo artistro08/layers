@@ -1,7 +1,7 @@
 [Setup]
 AppId={{8B4D6C21-5E3A-4C7E-9F2B-7A1D0E5C3B94}
 AppName=Layers
-AppVersion=1.0.0
+AppVersion=1.0.1
 DefaultDirName={localappdata}\Layers
 DefaultGroupName=Layers
 DisableProgramGroupPage=yes
