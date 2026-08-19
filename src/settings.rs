@@ -46,16 +46,15 @@ impl Settings {
         let _ = reg::set_dword(HUD_SUPPRESSED_LAYERS, self.hud_suppressed as u32);
     }
 
-    /// The layer a HUD would be announcing: the highest active layer, which
-    /// is the same one the tray icon badges.
-    fn displayed_layer(layers: protocol::Layers) -> u8 {
-        *layers.active().last().unwrap()
-    }
-
     /// Whether a HUD should be shown for this layer state.
+    ///
+    /// *Every* active layer must be allowed, not just the highest one. Layers
+    /// stack: holding a suppressed layer 1 while layer 5 is already active
+    /// produces the state "1, 5", and silencing layer 1 has to mean silence
+    /// there too — otherwise the suppressed layer still announces itself,
+    /// just with company.
     pub fn hud_allowed(&self, layers: protocol::Layers) -> bool {
-        self.hud_enabled
-            && (self.hud_suppressed & (1 << Settings::displayed_layer(layers))) == 0
+        self.hud_enabled && (layers.0 & self.hud_suppressed) == 0
     }
 
     /// Whether a HUD should be shown for a move between two layer states.
@@ -145,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn hud_disallowed_when_the_displayed_layer_is_suppressed() {
+    fn hud_disallowed_when_the_active_layer_is_suppressed() {
         // Layer 2 active, layer 2 suppressed.
         let s = settings(true, 1 << 2);
         assert!(!s.hud_allowed(protocol::Layers(0b100)));
@@ -164,20 +163,8 @@ mod tests {
         assert!(s.hud_allowed(protocol::Layers(0b1)));
     }
 
-    #[test]
-    fn displayed_layer_of_a_zero_mask_is_layer_zero() {
-        assert_eq!(Settings::displayed_layer(protocol::Layers(0)), 0);
-    }
 
-    #[test]
-    fn displayed_layer_of_a_single_bit_is_that_bit() {
-        assert_eq!(Settings::displayed_layer(protocol::Layers(0b1000)), 3);
-    }
 
-    #[test]
-    fn displayed_layer_of_multiple_bits_is_the_highest() {
-        assert_eq!(Settings::displayed_layer(protocol::Layers(0b1010)), 3);
-    }
 
     #[test]
     fn returning_from_a_suppressed_layer_stays_silent() {
@@ -205,5 +192,29 @@ mod tests {
     fn the_master_switch_silences_every_transition() {
         let s = Settings { hud_enabled: false, hud_suppressed: 0 };
         assert!(!s.hud_allowed_transition(protocol::Layers(0b1), protocol::Layers(0b100000)));
+    }
+
+    #[test]
+    fn a_suppressed_layer_silences_the_hud_even_stacked_with_an_allowed_one() {
+        // On layer 5, activating a suppressed layer 1 gives the state "1, 5".
+        // Layer 5 is allowed, but layer 1 is not, so this stays silent.
+        let s = Settings { hud_enabled: true, hud_suppressed: 0b10 };
+        assert!(!s.hud_allowed(protocol::Layers(0b100010)));
+    }
+
+    #[test]
+    fn stacked_layers_that_are_all_allowed_still_show() {
+        let s = Settings { hud_enabled: true, hud_suppressed: 0b10 };
+        assert!(s.hud_allowed(protocol::Layers(0b101000)));
+    }
+
+    #[test]
+    fn leaving_a_stack_containing_a_suppressed_layer_stays_silent() {
+        // "1, 5" -> "5" is still a move off a suppressed layer.
+        let s = Settings { hud_enabled: true, hud_suppressed: 0b10 };
+        assert!(!s.hud_allowed_transition(
+            protocol::Layers(0b100010),
+            protocol::Layers(0b100000)
+        ));
     }
 }
