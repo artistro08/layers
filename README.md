@@ -16,8 +16,6 @@ Native Rust on Win32 and Direct2D — one 1.1 MB executable, no runtime dependen
 
 https://github.com/artistro08/layers/releases/download/v1.0.0/layers-demo.mp4
 
-https://github.com/artistro08/layers/releases/download/v1.0.0/layers-demo.mp4
-
 ## Install
 
 Download `layers-setup.exe` from the [latest release](../../releases/latest) and run it. Per-user, so no UAC prompt. Plug in a flashed HID Remapper and it works — nothing to configure.
