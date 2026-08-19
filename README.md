@@ -14,7 +14,7 @@ Native Rust on Win32 and Direct2D — one 1.1 MB executable, no runtime dependen
 
 ## Demo
 
-<video src="https://raw.githubusercontent.com/artistro08/layers/main/assets/demo.mp4" controls width="720"></video>
+https://raw.githubusercontent.com/artistro08/layers/main/assets/demo.mp4
 
 ## Install
 
