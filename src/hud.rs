@@ -29,7 +29,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, KillTimer, RegisterClassW, SetTimer, ShowWindow,
+    CreateWindowExW, DefWindowProcW, KillTimer, RegisterClassW, SetTimer, SetWindowPos,
+    ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     UpdateLayeredWindow, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_DESTROY, WM_TIMER, WNDCLASSW,
     WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT, WS_POPUP,
 };
@@ -146,6 +147,20 @@ impl Hud {
             });
 
             let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+            // WS_EX_TOPMOST only puts the window in the topmost band; order
+            // *within* that band follows activation, and this window is
+            // created once at startup. Any other topmost window that appears
+            // later sits above it, and SW_SHOWNOACTIVATE does not re-raise
+            // it. Re-assert on every show.
+            let _ = SetWindowPos(
+                self.hwnd,
+                Some(HWND_TOPMOST),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
             Ok(())
         }
     }

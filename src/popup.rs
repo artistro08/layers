@@ -391,7 +391,8 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetCursorPos, GetWindowRect, KillTimer, LoadCursorW,
-    PostMessageW, RegisterClassW, SetForegroundWindow, SetTimer, ShowWindow, UpdateLayeredWindow,
+    PostMessageW, RegisterClassW, SetForegroundWindow, SetTimer, SetWindowPos, ShowWindow,
+    UpdateLayeredWindow, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     IDC_ARROW, SW_HIDE, SW_SHOWNOACTIVATE, ULW_ALPHA, WM_ACTIVATEAPP, WM_KEYDOWN, WM_KILLFOCUS,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_TIMER, WNDCLASSW, WS_EX_LAYERED,
     WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
@@ -565,6 +566,19 @@ impl Popup {
 
             if open.is_none() {
                 let _ = ShowWindow(self.hwnd, SW_SHOWNOACTIVATE);
+                // Same reason as the HUD: being in the topmost band is not
+                // the same as being at the front of it. Only on first open,
+                // so the submenu — which re-asserts on its own show — stays
+                // above this window rather than being buried by a repaint.
+                let _ = SetWindowPos(
+                    self.hwnd,
+                    Some(HWND_TOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
                 // Without foreground ownership the popup never receives the
                 // kill-focus that dismisses it. WS_EX_NOACTIVATE does not
                 // block this call — it is MSDN's own remedy for it — but
