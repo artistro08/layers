@@ -8,7 +8,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 /// Discriminants are packed into a window message wParam in main.rs. Do not
 /// reorder without updating the unpacking there.
@@ -88,6 +88,18 @@ impl From<hidapi::HidError> for DeviceError {
 }
 
 const RECONNECT_DELAY: Duration = Duration::from_secs(2);
+/// How often to confirm our expression is still installed.
+const VERIFY_INTERVAL: Duration = Duration::from_secs(2);
+
+/// Consecutive failed checks before reinstalling.
+///
+/// Loading a config from the web tool sends `CLEAR_EXPRESSIONS` and ends with
+/// `PERSIST_CONFIG`. Appending into the middle of that burst would get our
+/// expression written to the user's flash, which this app promises never to
+/// do. Waiting for the absence to persist keeps the reinstall well clear of
+/// the write sequence.
+const MISSES_BEFORE_REINSTALL: u32 = 2;
+
 /// Long enough that an idle device does not spin the CPU, short enough that
 /// quit stays responsive.
 const READ_TIMEOUT_MS: i32 = 500;
@@ -182,25 +194,47 @@ fn session(
         return Ok(());
     }
 
-    let status = match claim_slot(stop, &dev)? {
-        protocol::SlotChoice::NoneFree => Status::NoSlot,
-        protocol::SlotChoice::Existing(_) => Status::Connected,
-        protocol::SlotChoice::Empty(slot) => {
-            dev.send_feature_report(&protocol::append_expression(slot))?;
-            // Required. Without RESUME the firmware never marks the expression
-            // valid and eval_expr silently returns zero forever.
-            dev.send_feature_report(&protocol::resume())?;
-            Status::Connected
-        }
-    };
-
-    dev.send_feature_report(&protocol::set_monitor_enabled(true))?;
+    let (status, mut our_slot) = install(stop, &dev)?;
 
     *last = State { status, layers: Layers(1) };
     on_change(*last);
 
     let mut buf = [0u8; protocol::MONITOR_REPORT_LEN];
+    let mut last_verify = Instant::now();
+    let mut misses = 0u32;
     while !stop.load(Ordering::Relaxed) {
+        // Checked on every iteration rather than only on a read timeout:
+        // Monitor mode streams every raw input usage, so a busy device never
+        // reaches the timeout branch at all.
+        if last_verify.elapsed() >= VERIFY_INTERVAL && last.status == Status::Connected {
+            last_verify = Instant::now();
+            let present = our_slot
+                .map(|slot| slot_holds_ours(stop, &dev, slot).unwrap_or(false))
+                .unwrap_or(false);
+            if present {
+                misses = 0;
+            } else {
+                misses += 1;
+                if misses >= MISSES_BEFORE_REINSTALL {
+                    misses = 0;
+                    // Failures here are not fatal: the config tool suspends
+                    // the device mid-save, so a refused write just means try
+                    // again next interval. A genuine unplug surfaces through
+                    // the read below.
+                    if let Ok((status, slot)) = install(stop, &dev) {
+                        our_slot = slot;
+                        // RESUME resets the firmware's layer state, so layer 0
+                        // is the truth after a reinstall.
+                        let next = State { status, layers: Layers(1) };
+                        if next.status != last.status || next.layers != last.layers {
+                            *last = next;
+                            on_change(*last);
+                        }
+                    }
+                }
+            }
+        }
+
         match monitor_dev.read_timeout(&mut buf, READ_TIMEOUT_MS) {
             Ok(0) => continue, // timeout, the device is simply idle
             Ok(n) if n < protocol::MONITOR_REPORT_LEN => continue, // truncated report
@@ -221,6 +255,41 @@ fn session(
     // is left in RAM where it is inert once Monitor is off.
     let _ = dev.send_feature_report(&protocol::set_monitor_enabled(false));
     Ok(())
+}
+
+/// Claims a slot, injects the expression, and enables Monitor mode.
+///
+/// Used for the initial connect and again whenever the periodic check finds
+/// our expression gone — loading a config from the web tool clears every
+/// expression slot, ours included.
+fn install(
+    stop: &AtomicBool,
+    dev: &hidapi::HidDevice,
+) -> Result<(Status, Option<u8>), DeviceError> {
+    let (status, slot) = match claim_slot(stop, dev)? {
+        protocol::SlotChoice::NoneFree => (Status::NoSlot, None),
+        protocol::SlotChoice::Existing(slot) => (Status::Connected, Some(slot)),
+        protocol::SlotChoice::Empty(slot) => {
+            dev.send_feature_report(&protocol::append_expression(slot))?;
+            // Required. Without RESUME the firmware never marks the expression
+            // valid and eval_expr silently returns zero forever.
+            dev.send_feature_report(&protocol::resume())?;
+            (Status::Connected, Some(slot))
+        }
+    };
+    dev.send_feature_report(&protocol::set_monitor_enabled(true))?;
+    Ok((status, slot))
+}
+
+/// Whether `slot` still holds our expression. One round trip, unlike
+/// [`claim_slot`]'s eight.
+fn slot_holds_ours(
+    stop: &AtomicBool,
+    dev: &hidapi::HidDevice,
+    slot: u8,
+) -> Result<bool, DeviceError> {
+    dev.send_feature_report(&protocol::get_expression(slot))?;
+    Ok(read_response(stop, dev, protocol::parse_expression_response)?.is_ours())
 }
 
 /// Reads all eight expression slots and decides which to use.

@@ -116,7 +116,10 @@ pub struct SlotContents {
 }
 
 impl SlotContents {
-    fn is_ours(&self) -> bool {
+    /// Whether this slot still holds our injected expression. Checked
+    /// periodically: loading a config from the web tool sends
+    /// `CLEAR_EXPRESSIONS`, which wipes ours along with everything else.
+    pub fn is_ours(&self) -> bool {
         self.nelems == EXPR_NELEMS && self.bytes[..EXPR_BYTES.len()] == EXPR_BYTES
     }
 }
