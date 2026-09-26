@@ -14,7 +14,7 @@ Built with C# and WinUI 3 on the Windows App SDK, compiled with Native AOT. The 
 
 ## Demo
 
-https://github.com/user-attachments/assets/9815e70e-38ad-4df0-8377-3ea59ea997cc
+https://github.com/user-attachments/assets/adcb7c98-7fc8-4c50-9145-f2db5c19f211
 
 ## Install
 
