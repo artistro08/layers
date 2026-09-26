@@ -85,6 +85,28 @@ public sealed class SettingsViewModel : ObservableObject
         }
     }
 
+    /// <summary>Gets or sets the "Open HUD on" choice, as its drop-down index.</summary>
+    /// <remarks>
+    /// 0 is Primary, 1 Cursor, 2 Focused window, the order of <see cref="HudMonitorMode"/> and of the drop-down's items.
+    /// An unchanged or out-of-range index (the drop-down reports -1 while its items load) does nothing, so a two-way
+    /// binding echo can't loop.
+    /// </remarks>
+    public int HudMonitorIndex
+    {
+        get => (int)_hud.HudMonitor;
+        set
+        {
+            var mode = (HudMonitorMode)value;
+            if (mode == _hud.HudMonitor || !Enum.IsDefined(mode))
+            {
+                return;
+            }
+
+            Apply(_hud with { HudMonitor = mode });
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>Gets the 8 layer checkboxes, layers 0 through 7.</summary>
     public IReadOnlyList<LayerOptionViewModel> Layers { get; }
 

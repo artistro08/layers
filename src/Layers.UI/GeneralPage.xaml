@@ -7,7 +7,7 @@
     NavigationCacheMode="Required">
 
     <!-- Content, 24 DIPs Below The Title Bar -->
-    <ScrollViewer>
+    <ScrollViewer x:Name="Scroller">
         <StackPanel
             Padding="24"
             Spacing="16">
@@ -185,6 +185,38 @@
                         AutomationProperties.Name="HUD Show Duration (In Seconds)" />
                 </Grid>
                 <!-- /Show Duration -->
+
+                <!-- Open HUD On: Icon And Label Left, Monitor Choice At The Row's Right Edge, Set Apart From The Slider -->
+                <!-- Items Set In Code From A Concrete List -->
+                <Grid
+                    Margin="0,12,0,0"
+                    ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <FontIcon
+                        x:Name="MonitorIcon"
+                        VerticalAlignment="Center"
+                        FontSize="16"
+                        AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock
+                        x:Name="MonitorLabel"
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        Text="Open HUD on" />
+                    <ComboBox
+                        x:Name="MonitorPicker"
+                        Grid.Column="2"
+                        VerticalAlignment="Center"
+                        SelectedIndex="{x:Bind Model.HudMonitorIndex, Mode=TwoWay}"
+                        Loaded="MonitorPicker_Loaded"
+                        IsEnabled="{x:Bind Model.HudEnabled, Mode=OneWay}"
+                        AccessKey="O"
+                        AutomationProperties.Name="Open HUD on" />
+                </Grid>
+                <!-- /Open HUD On -->
             </StackPanel>
             <!-- /HUD Section -->
         </StackPanel>

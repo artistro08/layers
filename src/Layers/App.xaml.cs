@@ -110,7 +110,7 @@ public sealed partial class App : Application
         _lastState   = state;
         if (HudRules.ShouldShow(_hudSettings, previous, state))
         {
-            _hud?.Show(state.Layers, _hudSettings.Hold);
+            _hud?.Show(state.Layers, _hudSettings.Hold, _hudSettings.HudMonitor);
         }
 
         // Update Tray And Menu

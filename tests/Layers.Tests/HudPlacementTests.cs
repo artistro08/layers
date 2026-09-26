@@ -88,4 +88,55 @@ public sealed class HudPlacementTests
         Assert.AreEqual(x, position.X, 1e-4);
         Assert.AreEqual(y, position.Y, 1e-4);
     }
+
+    [TestMethod]
+    [DataRow(1.0, -800, -98, 12)]
+    [DataRow(1.5, -800, -127, 18)]
+    public void Anchor_NonPrimaryNegativeOriginAtItsOwnScale(double scale, int x, int y, int gap)
+    {
+        // A Monitor Left Of And Above The Primary, Its Taskbar At The Bottom
+        var work   = new RectInt32(-1600, -1000, 1600, 960);
+        var anchor = HudPlacement.Anchor(work, scale);
+
+        // Centered, Box And Gap At This Monitor's Scale Above Its Work-Area Bottom (-40)
+        Assert.AreEqual(new PointInt32(x, y), anchor);
+        Assert.AreEqual(-40 - gap, anchor.Y + HudPlacement.BoxPixels(scale));
+        Assert.AreEqual(-40 - 1, anchor.Y + HudPlacement.BoxPixels(scale) + HudPlacement.GapDips(scale) * scale, 1e-9);
+
+        // Host Bottom-Left On The Anchor, So It Stays On This Monitor
+        Assert.AreEqual(new PointInt32(x, y - 47), HudPlacement.HostPosition(anchor, 47));
+    }
+
+    [TestMethod]
+    [DataRow(HudMonitorMode.Primary, 1)]
+    [DataRow(HudMonitorMode.Cursor, 2)]
+    [DataRow(HudMonitorMode.FocusedWindow, 3)]
+    public void ChooseMonitor_PicksPerMode(HudMonitorMode mode, int expected)
+    {
+        Assert.AreEqual((nint)expected, HudPlacement.ChooseMonitor(mode, 1, 2, 3));
+    }
+
+    [TestMethod]
+    public void ChooseMonitor_FocusedWindowWithoutOneFallsBackToPrimary()
+    {
+        Assert.AreEqual((nint)1, HudPlacement.ChooseMonitor(HudMonitorMode.FocusedWindow, 1, 2, 0));
+    }
+
+    [TestMethod]
+    public void ChooseMonitor_UnknownModeIsPrimary()
+    {
+        Assert.AreEqual((nint)1, HudPlacement.ChooseMonitor((HudMonitorMode)7, 1, 2, 3));
+    }
+
+    [TestMethod]
+    [DataRow("Progman", true)]
+    [DataRow("WorkerW", true)]
+    [DataRow("Shell_TrayWnd", true)]
+    [DataRow("Shell_SecondaryTrayWnd", true)]
+    [DataRow("Notepad", false)]
+    [DataRow("", false)]
+    public void IsShellWindow_DesktopAndTaskbarOnly(string className, bool expected)
+    {
+        Assert.AreEqual(expected, HudPlacement.IsShellWindow(className));
+    }
 }

@@ -36,6 +36,15 @@ public sealed class TrayMenuTests
 
         expected.AddRange(["Layer 0", "---", "Settings…", "---", "Quit"]);
         CollectionAssert.AreEqual(expected, VisibleTexts(host));
+
+        // The Status, Detail, And Layer Rows Are Enabled: Normal Text And Hover, With No Action
+        var rows = host.MenuItems
+            .OfType<MenuFlyoutItem>()
+            .Where(item => item.Visibility == Visibility.Visible)
+            .Take(expected.IndexOf("---"))
+            .ToList();
+        Assert.HasCount(expected.IndexOf("---"), rows);
+        Assert.IsTrue(rows.All(row => row.IsEnabled), "a status or layer row is disabled");
         host.Close();
     });
 

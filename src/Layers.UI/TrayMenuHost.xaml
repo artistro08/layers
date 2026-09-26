@@ -18,8 +18,7 @@
                 <MenuFlyoutItem
                     x:Name="StatusItem"
                     Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
-                    Text="{x:Bind Model.StatusLabel, Mode=OneWay}"
-                    IsEnabled="False">
+                    Text="{x:Bind Model.StatusLabel, Mode=OneWay}">
                     <MenuFlyoutItem.Icon>
                         <PathIcon
                             Width="16"
@@ -34,15 +33,13 @@
                     x:Name="DetailItem"
                     Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
                     Text="{x:Bind Model.StatusDetail, Mode=OneWay}"
-                    Visibility="{x:Bind Model.HasStatusDetail, Mode=OneWay}"
-                    IsEnabled="False" />
+                    Visibility="{x:Bind Model.HasStatusDetail, Mode=OneWay}" />
 
                 <!-- Layer Row -->
                 <MenuFlyoutItem
                     x:Name="LayerItem"
                     Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
-                    Text="{x:Bind Model.LayerLabel, Mode=OneWay}"
-                    IsEnabled="False">
+                    Text="{x:Bind Model.LayerLabel, Mode=OneWay}">
                     <MenuFlyoutItem.Icon>
                         <PathIcon
                             Width="16"

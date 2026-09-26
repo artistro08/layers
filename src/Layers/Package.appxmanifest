@@ -11,7 +11,7 @@
     <Identity
         Name="Artistro08.Layers"
         Publisher="CN=Devin Green"
-        Version="2.0.0.0" />
+        Version="2.0.1.0" />
 
     <!-- Store Properties -->
     <Properties>

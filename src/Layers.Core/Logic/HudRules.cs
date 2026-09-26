@@ -4,12 +4,18 @@ namespace Layers.Core.Logic;
 /// The user's HUD preferences.
 /// </summary>
 /// <remarks>
-/// Persisted by <c>SettingsStore</c> as <c>HudEnabled</c>, <c>HudSuppressedLayers</c>, and <c>HudHoldMs</c>.
+/// Persisted by <c>SettingsStore</c> as <c>HudEnabled</c>, <c>HudSuppressedLayers</c>, <c>HudHoldMs</c>, and
+/// <c>HudMonitor</c>.
 /// </remarks>
 /// <param name="HudEnabled">Master switch.</param>
 /// <param name="HudSuppressedLayers">Bit <c>n</c> set means layer <c>n</c> is muted.</param>
 /// <param name="HudHoldMs">How long the HUD stays up after the last change, in milliseconds.</param>
-public readonly record struct HudSettings(bool HudEnabled, byte HudSuppressedLayers, int HudHoldMs)
+/// <param name="HudMonitor">Which monitor the HUD opens on. Primary unless given.</param>
+public readonly record struct HudSettings(
+    bool HudEnabled,
+    byte HudSuppressedLayers,
+    int HudHoldMs,
+    HudMonitorMode HudMonitor = HudMonitorMode.Primary)
 {
     /// <summary>The shortest allowed hold, in milliseconds.</summary>
     public const int MinHoldMs = 500;
@@ -42,6 +48,24 @@ public readonly record struct HudSettings(bool HudEnabled, byte HudSuppressedLay
     /// <param name="ms">The hold in milliseconds.</param>
     /// <returns>The hold, between <see cref="MinHoldMs"/> and <see cref="MaxHoldMs"/>.</returns>
     public static int ClampHold(int ms) => Math.Clamp(ms, MinHoldMs, MaxHoldMs);
+}
+
+/// <summary>
+/// Which monitor the HUD opens on, the "Open HUD on" setting.
+/// </summary>
+/// <remarks>
+/// Stored as the <c>HudMonitor</c> DWORD, so the values are fixed. Evaluated on every show.
+/// </remarks>
+public enum HudMonitorMode
+{
+    /// <summary>The primary monitor, the default.</summary>
+    Primary = 0,
+
+    /// <summary>The monitor holding the mouse cursor.</summary>
+    Cursor = 1,
+
+    /// <summary>The monitor holding the foreground window, or the primary when there's none.</summary>
+    FocusedWindow = 2,
 }
 
 /// <summary>

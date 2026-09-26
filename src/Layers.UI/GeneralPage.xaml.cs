@@ -16,9 +16,9 @@ namespace Layers.UI;
 /// Shown in the window's <see cref="Frame"/>, which passes the window's one <see cref="SettingsViewModel"/> as the
 /// navigation parameter. The page is cached, so going back to it keeps its bindings and scroll position. The HUD
 /// section, in order: what the HUD is, the Show HUD switch with a "Choose layers..." combo box of the 8 layer
-/// checkboxes at the row's right edge, a live demo of the HUD over the bottom of the user's wallpaper (replayed whenever
-/// HUD Show Duration changes, and by its accent Play button), and the HUD Show Duration slider with a speedometer
-/// icon and half-second ticks.
+/// checkboxes at the row's right edge, a live demo of the HUD over the bottom of the user's wallpaper (replayed
+/// whenever HUD Show Duration changes, and by its accent Play button), the HUD Show Duration slider with a
+/// speedometer icon and half-second ticks, and last the "Open HUD on" monitor choice.
 /// </remarks>
 public sealed partial class GeneralPage : Page
 {
@@ -31,8 +31,9 @@ public sealed partial class GeneralPage : Page
     public GeneralPage()
     {
         InitializeComponent();
-        HoldIcon.Glyph = char.ConvertFromUtf32(0xEC4A);
-        PlayIcon.Glyph = char.ConvertFromUtf32(0xE768);
+        HoldIcon.Glyph    = char.ConvertFromUtf32(0xEC4A);
+        PlayIcon.Glyph    = char.ConvertFromUtf32(0xE768);
+        MonitorIcon.Glyph = char.ConvertFromUtf32(0xE78B);
     }
 
     /// <summary>Gets the view model, set on the first navigation.</summary>
@@ -56,6 +57,59 @@ public sealed partial class GeneralPage : Page
         // Layer Picker Rows From A Concrete List, So CsWinRT Generates Its Collection Interfaces
         // An x:Bind To The Array Behind IReadOnlyList Marshals Without Them And ItemsSource Throws E_INVALIDARG
         LayerPicker.ItemsSource = new List<LayerOptionViewModel>(Model.Layers);
+
+        // Open HUD On Choices, In HudMonitorMode Order, From A Concrete List For The Same Reason
+        MonitorPicker.ItemsSource = new List<string>
+        {
+            "Primary monitor",
+            "Monitor with mouse cursor",
+            "Monitor with focused window",
+        };
+    }
+
+    /// <summary>
+    /// Gets how tall the window's content must be to show this whole page without scrolling.
+    /// </summary>
+    /// <remarks>
+    /// The page's top within the window (below the title bar) plus its content's desired height, padding included.
+    /// The Settings window uses it to grow while the startup note shows.
+    /// </remarks>
+    /// <param name="windowRoot">The window's root element.</param>
+    /// <returns>The height in DIPs.</returns>
+    internal double NeededHeight(UIElement windowRoot)
+    {
+        UpdateLayout();
+        var top = Scroller.TransformToVisual(windowRoot).TransformPoint(default).Y;
+        return top + ((FrameworkElement)Scroller.Content).DesiredSize.Height;
+    }
+
+    // As Wide As The Widest Choice: The Box's Own Chrome (Padding And Chevron) Plus That Choice's Measured Text
+    // Also What Makes The List Open Over The Box: A List Wider Than The Box Opened Offset From It
+    // Measured Once Its Template Has Laid Out, From The Width It Took For The Shown Choice
+    private void MonitorPicker_Loaded(object sender, RoutedEventArgs e)
+    {
+        // Only The First Load Measures, Since Later Loads (The Page Is Cached) Would Read An Already-Widened ActualWidth
+        if (!double.IsNaN(MonitorPicker.Width) || MonitorPicker.ItemsSource is not List<string> choices)
+        {
+            return;
+        }
+
+        MonitorPicker.UpdateLayout();
+        var chrome = MonitorPicker.ActualWidth - TextWidth(MonitorPicker.SelectedItem as string ?? string.Empty);
+        MonitorPicker.Width = Math.Ceiling(chrome + choices.Max(TextWidth));
+    }
+
+    private double TextWidth(string text)
+    {
+        var block = new TextBlock
+        {
+            Text       = text,
+            FontFamily = MonitorPicker.FontFamily,
+            FontSize   = MonitorPicker.FontSize,
+            FontWeight = MonitorPicker.FontWeight,
+        };
+        block.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        return block.DesiredSize.Width;
     }
 
     private void HoldSlider_ValueChanged(object sender, RangeBaseValueChangedEventArgs e)

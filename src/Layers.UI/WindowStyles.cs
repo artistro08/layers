@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+using Layers.Core.Logic;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Windows.Graphics;
@@ -14,7 +16,7 @@ namespace Layers.UI;
 /// Win32 window tweaks WinUI has no stock API for.
 /// </summary>
 /// <remarks>
-/// The invisible flyout host setup, re-asserting topmost, the client origin, and monitor scale.
+/// The invisible flyout host setup, re-asserting topmost, the client origin, monitor scale, and the HUD's monitor.
 /// </remarks>
 public static class WindowStyles
 {
@@ -73,23 +75,57 @@ public static class WindowStyles
         return new PointInt32(origin.X, origin.Y);
     }
 
-    /// <summary>Gets the primary monitor's scale.</summary>
-    /// <remarks>The HUD always sits on the primary monitor.</remarks>
-    /// <returns>For example 1.5 at 144 DPI.</returns>
-    public static double PrimaryScale() => ScaleAt(new PointInt32(0, 0), primary: true);
-
-    /// <summary>Gets the scale of the monitor containing a point.</summary>
-    /// <remarks>Used to size the Settings window on the monitor under the cursor.</remarks>
-    /// <param name="point">A screen point.</param>
-    /// <returns>The scale.</returns>
-    public static double ScaleAt(PointInt32 point) => ScaleAt(point, primary: false);
-
-    private static double ScaleAt(PointInt32 point, bool primary)
+    /// <summary>
+    /// Gets the work area and scale of the monitor the HUD opens on.
+    /// </summary>
+    /// <remarks>
+    /// Looks up the primary monitor, the one holding the cursor, and the one holding the foreground window (none when
+    /// there's no foreground window or it's the desktop or taskbar), then lets <see cref="HudPlacement.ChooseMonitor"/>
+    /// pick. Called on every open, so the choice follows the cursor or focus at that moment.
+    /// </remarks>
+    /// <param name="mode">The "Open HUD on" setting.</param>
+    /// <returns>The monitor's work area in physical pixels, and its scale.</returns>
+    public static (RectInt32 Work, double Scale) HudMonitor(HudMonitorMode mode)
     {
-        var monitor = PInvoke.MonitorFromPoint(new System.Drawing.Point(point.X, point.Y),
-            primary ? MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY : MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
-        return PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out var dpiX, out _).Succeeded
+        // Primary And Cursor Monitors
+        PInvoke.GetCursorPos(out var cursor);
+        var primary       = PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY);
+        var cursorMonitor = PInvoke.MonitorFromPoint(cursor, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONEAREST);
+
+        // Foreground Monitor, None For No Window Or The Desktop And Taskbar
+        var foreground        = PInvoke.GetForegroundWindow();
+        var foregroundMonitor = foreground.IsNull || HudPlacement.IsShellWindow(ClassName(foreground))
+            ? HMONITOR.Null
+            : PInvoke.MonitorFromWindow(foreground, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTONULL);
+
+        // Its Work Area And Scale, Or The Primary's If It Vanished In Between
+        var monitor = new HMONITOR(HudPlacement.ChooseMonitor(mode, primary, cursorMonitor, foregroundMonitor));
+        var info    = new MONITORINFO { cbSize = (uint)Marshal.SizeOf<MONITORINFO>() };
+        if (!PInvoke.GetMonitorInfo(monitor, ref info))
+        {
+            monitor = primary;
+            PInvoke.GetMonitorInfo(monitor, ref info);
+        }
+
+        var work = info.rcWork;
+        return (new RectInt32(work.left, work.top, work.Width, work.Height), Scale(monitor));
+    }
+
+    /// <summary>Gets the primary monitor's scale.</summary>
+    /// <remarks>Used by the UI tests, which place the HUD on the primary monitor.</remarks>
+    /// <returns>For example 1.5 at 144 DPI.</returns>
+    public static double PrimaryScale() =>
+        Scale(PInvoke.MonitorFromPoint(default, MONITOR_FROM_FLAGS.MONITOR_DEFAULTTOPRIMARY));
+
+    private static double Scale(HMONITOR monitor) =>
+        PInvoke.GetDpiForMonitor(monitor, MONITOR_DPI_TYPE.MDT_EFFECTIVE_DPI, out var dpiX, out _).Succeeded
             ? dpiX / 96.0
             : 1.0;
+
+    private static string ClassName(HWND hwnd)
+    {
+        Span<char> name = stackalloc char[256];
+        var length      = PInvoke.GetClassName(hwnd, name);
+        return new string(name[..length]);
     }
 }

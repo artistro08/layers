@@ -160,6 +160,49 @@ public sealed class SettingsViewModelTests : IDisposable
     }
 
     [TestMethod]
+    public void HudMonitor_LoadsStoredIndex()
+    {
+        _store.Save(HudSettings.Default with { HudMonitor = HudMonitorMode.Cursor });
+
+        Assert.AreEqual(1, Create().HudMonitorIndex);
+    }
+
+    [TestMethod]
+    public void HudMonitor_SavesAndNotifies()
+    {
+        var model   = Create();
+        var changed = new List<string?>();
+        HudSettings? raised = null;
+        model.HudSettingsChanged += (_, s) => raised = s;
+        model.PropertyChanged    += (_, e) => changed.Add(e.PropertyName);
+
+        model.HudMonitorIndex = 2;
+
+        Assert.AreEqual(HudMonitorMode.FocusedWindow, _store.Load().HudMonitor);
+        Assert.AreEqual(new HudSettings(true, 0, 1700, HudMonitorMode.FocusedWindow), raised);
+        CollectionAssert.AreEqual(new[] { nameof(SettingsViewModel.HudMonitorIndex) }, changed);
+    }
+
+    [TestMethod]
+    [DataRow(0)]
+    [DataRow(-1)]
+    [DataRow(3)]
+    public void HudMonitor_EchoOrOutOfRangeDoesNothing(int index)
+    {
+        var model  = Create();
+        var raised = 0;
+        model.HudSettingsChanged += (_, _) => raised++;
+        model.PropertyChanged    += (_, _) => raised++;
+
+        // The Stored Value Echoed Back, Or The Drop-Down's -1 While Its Items Load
+        model.HudMonitorIndex = index;
+
+        Assert.AreEqual(0, raised);
+        Assert.AreEqual(0, model.HudMonitorIndex);
+        Assert.IsNull(_key.Get("HudMonitor"));
+    }
+
+    [TestMethod]
     public async Task Startup_LoadsState()
     {
         var model = Create(new StartupState(false, false, "Turned off in Settings › Apps › Startup."));
@@ -200,6 +243,6 @@ public sealed class SettingsViewModelTests : IDisposable
     [TestMethod]
     public void Version_IsAssemblyVersion()
     {
-        Assert.AreEqual("2.0.0", Create().Version);
+        Assert.AreEqual("2.0.1", Create().Version);
     }
 }

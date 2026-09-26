@@ -51,6 +51,10 @@ public sealed class SettingsWindowTests : IDisposable
 
     private static T InPage<T>(SettingsWindow window, string name) => (T)CurrentPage(window).FindName(name);
 
+    private static Windows.Foundation.Rect Bounds(FrameworkElement element) =>
+        element.TransformToVisual(null)
+            .TransformBounds(new Windows.Foundation.Rect(0, 0, element.ActualWidth, element.ActualHeight));
+
     private static NavigationViewItem NavItem(SettingsWindow window, string label) =>
         window.Controls().OfType<NavigationViewItem>().Single(item => (string)item.Content == label);
 
@@ -175,6 +179,179 @@ public sealed class SettingsWindowTests : IDisposable
     });
 
     [TestMethod]
+    public Task MonitorPicker_HoldsThreeChoices_SavesAndFollowsHud() => UiHost.RunAsync(async () =>
+    {
+        _store.Save(HudSettings.Default with { HudMonitor = HudMonitorMode.Cursor });
+
+        var window = Open();
+        await UiHost.Settle();
+
+        // Label, Name, Access Key, And The Stored Choice
+        var picker = InPage<ComboBox>(window, "MonitorPicker");
+        Assert.AreEqual("Open HUD on", InPage<TextBlock>(window, "MonitorLabel").Text);
+        Assert.AreEqual(char.ConvertFromUtf32(0xE78B), InPage<FontIcon>(window, "MonitorIcon").Glyph);
+        Assert.IsNull(picker.Header);
+        Assert.AreEqual("Open HUD on", AutomationProperties.GetName(picker));
+        Assert.AreEqual("O", picker.AccessKey);
+        CollectionAssert.AreEqual(
+            new List<string> { "Primary monitor", "Monitor with mouse cursor", "Monitor with focused window" },
+            picker.Items.Cast<string>().ToList());
+        Assert.AreEqual(1, picker.SelectedIndex);
+
+        // Picking One Saves It
+        picker.SelectedIndex = 2;
+        await UiHost.Settle();
+        Assert.AreEqual(HudMonitorMode.FocusedWindow, _store.Load().HudMonitor);
+        picker.SelectedIndex = 0;
+        await UiHost.Settle();
+        Assert.AreEqual(HudMonitorMode.Primary, _store.Load().HudMonitor);
+
+        // Off With The HUD
+        Switch(window, "Show HUD").IsOn = false;
+        await UiHost.Settle();
+        Assert.IsFalse(picker.IsEnabled);
+        Switch(window, "Show HUD").IsOn = true;
+        await UiHost.Settle();
+        Assert.IsTrue(picker.IsEnabled);
+    });
+
+    [TestMethod]
+    public Task GeneralPage_FitsWithoutScrolling_WithNoSpareRoom() => UiHost.RunAsync(async () =>
+    {
+        var window = Open();
+        await UiHost.Settle();
+
+        // The Page's Content Below The Title Bar Fits The Window's Height With Nothing To Scroll
+        var scroller = Descendants(CurrentPage(window)).OfType<ScrollViewer>().First();
+        var top      = scroller.TransformToVisual(null).TransformPoint(default).Y;
+        var content  = ((FrameworkElement)scroller.Content).DesiredSize.Height;
+        var needs = $"the General page needs {top + content} DIPs";
+        Assert.IsLessThanOrEqualTo(SettingsWindow.LogicalHeight, top + content, needs);
+        Assert.AreEqual(0, scroller.ScrollableHeight, $"the General page scrolls by {scroller.ScrollableHeight} DIPs");
+
+        // And The Window Is No Taller Than That, Give Or Take Text Rounding At The Monitor's Scale
+        var spare = SettingsWindow.LogicalHeight - (top + content);
+        var root  = (FrameworkElement)window.Content;
+        Assert.IsLessThanOrEqualTo(6, spare, $"the window has {spare} spare DIPs");
+        Assert.AreEqual(SettingsWindow.LogicalHeight, root.ActualHeight, 1.5, "the window isn't its logical height");
+        Assert.AreEqual(SettingsWindow.LogicalWidth, root.ActualWidth, 1.5, "the window isn't its logical width");
+    });
+
+    [TestMethod]
+    public Task StartupNote_GrowsWindow_SoNothingScrolls() => UiHost.RunAsync(async () =>
+    {
+        var window = Open(new StartupState(false, false, "Turned off in Settings › Apps › Startup."));
+        await UiHost.Settle();
+        await UiHost.Settle();
+
+        // The Note Shows, The Page Still Doesn't Scroll, And The Window Grew To Make Room
+        var scroller = Descendants(CurrentPage(window)).OfType<ScrollViewer>().First();
+        var root     = (FrameworkElement)window.Content;
+        Assert.AreEqual(Visibility.Visible, InPage<TextBlock>(window, "StartupNote").Visibility);
+        Assert.AreEqual(0, scroller.ScrollableHeight, $"the General page scrolls by {scroller.ScrollableHeight} DIPs");
+        var grown = root.ActualHeight - SettingsWindow.LogicalHeight;
+        Assert.IsGreaterThan(10, grown, "the window didn't grow for the note");
+    });
+
+    [TestMethod]
+    public Task MonitorPicker_AsWideAsItsWidestChoice_OpensOverTheBox() => UiHost.RunAsync(async () =>
+    {
+        _store.Save(HudSettings.Default with { HudMonitor = HudMonitorMode.FocusedWindow });
+
+        var window = Open();
+        await UiHost.Settle();
+
+        // The Widest Choice Shows Whole, With The Box No Wider Than That Needs
+        var picker    = InPage<ComboBox>(window, "MonitorPicker");
+        var presenter = Descendants(picker).OfType<ContentPresenter>().First(p => p.Name == "ContentPresenter");
+        var text      = Descendants(presenter).OfType<TextBlock>().Single();
+        Assert.AreEqual("Monitor with focused window", text.Text);
+        Assert.IsFalse(text.IsTextTrimmed, "the widest choice is cut off");
+        Assert.IsLessThanOrEqualTo(presenter.ActualWidth + 0.5, text.ActualWidth, "the widest choice is cut off");
+        text.Measure(new Windows.Foundation.Size(double.PositiveInfinity, double.PositiveInfinity));
+        var roomy = "the box is wider than its widest choice";
+        Assert.IsLessThanOrEqualTo(text.DesiredSize.Width + 2, presenter.ActualWidth, roomy);
+
+        // Opened, The Shown Choice's Row Sits Over The Box, As Wide As It
+        ((IExpandCollapseProvider)FrameworkElementAutomationPeer.CreatePeerForElement(picker)).Expand();
+        await UiHost.Settle();
+        var row      = (FrameworkElement)picker.ContainerFromIndex(2);
+        var box      = Bounds(picker);
+        var rowBound = Bounds(row);
+        ((IExpandCollapseProvider)FrameworkElementAutomationPeer.CreatePeerForElement(picker)).Collapse();
+        var where = $"row {rowBound}, box {box}";
+        var boxCenter = new Windows.Foundation.Point(box.X + (box.Width / 2), box.Y + (box.Height / 2));
+        var rowCenter = new Windows.Foundation.Point(
+            rowBound.X + (rowBound.Width / 2),
+            rowBound.Y + (rowBound.Height / 2));
+        Assert.AreEqual(boxCenter.X, rowCenter.X, 6, $"the list opened beside the box: {where}");
+        Assert.AreEqual(boxCenter.Y, rowCenter.Y, 6, $"the list opened off the box: {where}");
+
+        // Navigating Away And Back Twice (The Page Is Cached, So Loaded Fires Again) Doesn't Regrow The Box
+        var firstWidth = picker.Width;
+        for (var i = 0; i < 2; i++)
+        {
+            Named<NavigationView>(window, "Nav").SelectedItem = NavItem(window, "About");
+            await WaitForPage<AboutPage>(window);
+            Named<NavigationView>(window, "Nav").SelectedItem = NavItem(window, "General");
+            await WaitForPage<GeneralPage>(window);
+        }
+
+        var picker2 = InPage<ComboBox>(window, "MonitorPicker");
+        Assert.AreEqual(firstWidth, picker2.Width, 0.001, "the box widened after a round trip through About");
+    });
+
+    [TestMethod]
+    public Task CaptionButtons_MinimizeAndCloseOnly() => UiHost.RunAsync(async () =>
+    {
+        var window = Open();
+        await UiHost.Settle();
+
+        // No System Caption Buttons, So No Maximize; Minimize Still Allowed For The Taskbar And Win+Down
+        var presenter = (Microsoft.UI.Windowing.OverlappedPresenter)window.AppWindow.Presenter;
+        Assert.IsFalse(presenter.HasTitleBar);
+        Assert.IsTrue(presenter.HasBorder);
+        Assert.IsTrue(presenter.IsMinimizable);
+        Assert.IsFalse(presenter.IsMaximizable);
+        Assert.IsFalse(presenter.IsResizable);
+
+        // Ours: Named, Focusable, Stock Glyphs At 10, 48 DIP Squares, Close On The Window's Right Edge
+        var minimize = Named<Button>(window, "MinimizeButton");
+        var close    = Named<Button>(window, "CloseButton");
+        Assert.AreEqual("Minimize", AutomationProperties.GetName(minimize));
+        Assert.AreEqual("Close", AutomationProperties.GetName(close));
+        foreach (var (button, glyph) in new[] { (minimize, 0xE921), (close, 0xE8BB) })
+        {
+            Assert.IsTrue(button.IsTabStop);
+            Assert.AreEqual(48, button.ActualWidth);
+            Assert.AreEqual(48, button.ActualHeight);
+            var icon = (FontIcon)button.Content;
+            Assert.AreEqual(char.ConvertFromUtf32(glyph), icon.Glyph);
+            Assert.AreEqual(10, icon.FontSize);
+        }
+
+        var right = close.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(close.ActualWidth, 0));
+        Assert.AreEqual(((FrameworkElement)window.Content).ActualWidth, right.X, 1, "Close isn't on the right edge");
+        Assert.AreEqual(0, right.Y, 1, "Close isn't at the top");
+        Assert.AreEqual(
+            close.TransformToVisual(null).TransformPoint(default).X,
+            minimize.TransformToVisual(null).TransformPoint(new Windows.Foundation.Point(minimize.ActualWidth, 0)).X,
+            0.5,
+            "Minimize isn't just left of Close");
+
+        // Clicked From The Keyboard: Minimize Minimizes, Close Closes
+        ((IInvokeProvider)FrameworkElementAutomationPeer.CreatePeerForElement(minimize)).Invoke();
+        await UiHost.Settle();
+        Assert.AreEqual(Microsoft.UI.Windowing.OverlappedPresenterState.Minimized, presenter.State);
+        presenter.Restore();
+        await UiHost.Settle();
+
+        ((IInvokeProvider)FrameworkElementAutomationPeer.CreatePeerForElement(close)).Invoke();
+        await UiHost.Settle();
+        Assert.IsNull(SettingsWindow.Current, "Close didn't close the window");
+    });
+
+    [TestMethod]
     public Task MovingSlider_SavesHoldAndShowsDemo() => UiHost.RunAsync(async () =>
     {
         var window = Open();
@@ -269,7 +446,7 @@ public sealed class SettingsWindowTests : IDisposable
         var window = Open();
         await UiHost.Settle();
 
-        // HUD Heading, Explanation, Show HUD Row, Demo, Then The Slider Row
+        // HUD Heading, Explanation, Show HUD Row, Demo, The Slider Row, Then Open HUD On
         var hudSwitch   = InPage<ToggleSwitch>(window, "HudSwitch");
         var explanation = InPage<TextBlock>(window, "HudExplanation");
         var preview     = InPage<HudPreview>(window, "Preview");
@@ -281,7 +458,10 @@ public sealed class SettingsWindowTests : IDisposable
         Assert.AreEqual(1, IndexOf(explanation), "explanation isn't under the heading");
         Assert.AreEqual(2, IndexOf(hudSwitch), "Show HUD row isn't after the explanation");
         Assert.AreEqual(3, IndexOf(preview), "demo isn't after the Show HUD row");
-        Assert.AreEqual(4, IndexOf(slider), "slider row isn't last");
+        Assert.AreEqual(4, IndexOf(slider), "slider row isn't after the demo");
+        var monitorRow = IndexOf(InPage<ComboBox>(window, "MonitorPicker"));
+        Assert.AreEqual(5, monitorRow, "Open HUD on row isn't after the slider");
+        Assert.AreEqual(6, section.Children.Count, "Open HUD on row isn't last");
 
         // Verbatim Explanation, With Room Below It
         Assert.AreEqual(

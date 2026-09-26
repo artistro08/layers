@@ -29,7 +29,7 @@ public sealed class SettingsStoreTests
     {
         using var temp = new TempRegistryKey();
         var store      = new SettingsStore(temp.Path);
-        var settings   = new HudSettings(false, 0b1010_0101, 2300);
+        var settings   = new HudSettings(false, 0b1010_0101, 2300, HudMonitorMode.FocusedWindow);
 
         store.Save(settings);
 
@@ -37,6 +37,53 @@ public sealed class SettingsStoreTests
         Assert.AreEqual(0, temp.Get("HudEnabled"));
         Assert.AreEqual(0b1010_0101, temp.Get("HudSuppressedLayers"));
         Assert.AreEqual(2300, temp.Get("HudHoldMs"));
+        Assert.AreEqual(2, temp.Get("HudMonitor"));
+    }
+
+    [TestMethod]
+    [DataRow(HudMonitorMode.Primary)]
+    [DataRow(HudMonitorMode.Cursor)]
+    [DataRow(HudMonitorMode.FocusedWindow)]
+    public void HudMonitor_RoundTrips(HudMonitorMode mode)
+    {
+        using var temp = new TempRegistryKey();
+        var store      = new SettingsStore(temp.Path);
+
+        store.Save(HudSettings.Default with { HudMonitor = mode });
+
+        Assert.AreEqual(mode, store.Load().HudMonitor);
+        Assert.AreEqual((int)mode, temp.Get("HudMonitor"));
+    }
+
+    [TestMethod]
+    public void HudMonitor_DefaultsToPrimary()
+    {
+        using var temp = new TempRegistryKey();
+        temp.Set("HudEnabled", 1, RegistryValueKind.DWord);
+
+        Assert.AreEqual(HudMonitorMode.Primary, HudSettings.Default.HudMonitor);
+        Assert.AreEqual(HudMonitorMode.Primary, new SettingsStore(temp.Path).Load().HudMonitor);
+    }
+
+    [TestMethod]
+    [DataRow(3)]
+    [DataRow(-1)]
+    [DataRow(int.MaxValue)]
+    public void HudMonitor_OutOfRangeIsPrimary(int stored)
+    {
+        using var temp = new TempRegistryKey();
+        temp.Set("HudMonitor", stored, RegistryValueKind.DWord);
+
+        Assert.AreEqual(HudMonitorMode.Primary, new SettingsStore(temp.Path).Load().HudMonitor);
+    }
+
+    [TestMethod]
+    public void HudMonitor_WrongTypeIsPrimary()
+    {
+        using var temp = new TempRegistryKey();
+        temp.Set("HudMonitor", "1", RegistryValueKind.String);
+
+        Assert.AreEqual(HudMonitorMode.Primary, new SettingsStore(temp.Path).Load().HudMonitor);
     }
 
     [TestMethod]

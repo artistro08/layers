@@ -59,3 +59,7 @@ SetPolyFillMode
 GetStockObject
 SystemParametersInfo
 SYSTEM_PARAMETERS_INFO_ACTION
+MonitorFromWindow
+GetMonitorInfo
+MONITORINFO
+GetClassName
