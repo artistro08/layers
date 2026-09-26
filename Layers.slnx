@@ -1,0 +1,21 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Layers.Core/Layers.Core.csproj" />
+    <Project Path="src/Layers.Installer/Layers.Installer.wixproj" Type="b7dd6f7e-def8-4e67-b5b7-07ef123db6f0">
+      <!-- Solution build skips this: it needs -p:PublishDir pointed at a published Layers.exe. build.ps1 builds it directly. -->
+      <Build Project="false" />
+    </Project>
+    <Project Path="src/Layers.UI/Layers.UI.csproj">
+      <Platform Project="x64" />
+    </Project>
+    <Project Path="src/Layers/Layers.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Layers.Tests/Layers.Tests.csproj" />
+    <Project Path="tests/Layers.UITests/Layers.UITests.csproj">
+      <Platform Project="x64" />
+    </Project>
+  </Folder>
+</Solution>

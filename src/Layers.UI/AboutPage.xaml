@@ -1,0 +1,96 @@
+<Page
+    x:Class="Layers.UI.AboutPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    NavigationCacheMode="Required">
+
+    <!-- Content Centered Both Ways, Scrolling Only When The Window Is Too Short For It -->
+    <ScrollViewer x:Name="Scroller">
+        <Grid MinHeight="{x:Bind Scroller.ViewportHeight, Mode=OneWay}">
+            <StackPanel
+                Padding="24"
+                HorizontalAlignment="Center"
+                VerticalAlignment="Center"
+                Spacing="16">
+
+                <!-- Every Line Centered -->
+                <StackPanel.Resources>
+                    <Style TargetType="TextBlock">
+                        <Setter Property="TextAlignment" Value="Center" />
+                    </Style>
+                </StackPanel.Resources>
+
+                <!-- App Icon And Name -->
+                <StackPanel Spacing="8">
+                    <Image
+                        Width="80"
+                        Height="80"
+                        Source="ms-appx:///Assets/Square150x150Logo.png"
+                        AutomationProperties.AccessibilityView="Raw" />
+                    <TextBlock
+                        Style="{StaticResource SubtitleTextBlockStyle}"
+                        TextAlignment="Center"
+                        Text="Layers" />
+                </StackPanel>
+
+                <!-- Author, On One Row -->
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <TextBlock
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Text="Made by" />
+                    <TextBlock>
+                        <Hyperlink
+                            NavigateUri="https://github.com/artistro08"
+                            AccessKey="A"
+                            AutomationProperties.Name="artistro08">artistro08</Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+
+                <!-- Version And Link On One Row (Links Are Hyperlinks In TextBlocks, So They Sit Flush With The Text) -->
+                <StackPanel
+                    HorizontalAlignment="Center"
+                    Orientation="Horizontal"
+                    Spacing="8">
+                    <TextBlock
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        Text="Version" />
+                    <TextBlock Text="{x:Bind Model.Version, Mode=OneWay}" />
+                    <TextBlock>
+                        <Hyperlink
+                            NavigateUri="https://github.com/artistro08/layers"
+                            AccessKey="G"
+                            AutomationProperties.Name="GitHub">GitHub</Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+
+                <!-- Divider -->
+                <Rectangle
+                    Height="1"
+                    Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+                <!-- Licenses -->
+                <StackPanel Spacing="4">
+                    <TextBlock
+                        Style="{StaticResource BodyStrongTextBlockStyle}"
+                        TextAlignment="Center"
+                        Text="Licenses" />
+                    <TextBlock>
+                        <Hyperlink
+                            NavigateUri="https://github.com/artistro08/layers/blob/main/LICENSE"
+                            AccessKey="L"
+                            AutomationProperties.Name="License (MIT)">License (MIT)</Hyperlink>
+                    </TextBlock>
+                    <TextBlock>
+                        <Hyperlink
+                            NavigateUri="https://github.com/artistro08/layers/blob/main/assets/NOTICE-fluentui.txt"
+                            AccessKey="T"
+                            AutomationProperties.Name="Third-party notices">Third-party notices</Hyperlink>
+                    </TextBlock>
+                </StackPanel>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</Page>

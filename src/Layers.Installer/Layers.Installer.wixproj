@@ -1,0 +1,24 @@
+<Project Sdk="WixToolset.Sdk/7.0.0">
+    <!-- MSI -->
+    <PropertyGroup>
+        <OutputName>Layers-$(Version)</OutputName>
+        <InstallerPlatform>x64</InstallerPlatform>
+        <DefineConstants>ProductVersion=$(Version);PublishDir=$(PublishDir)</DefineConstants>
+        <!-- Per-user installs keep files under the profile; these ICEs assume per-machine layout -->
+        <SuppressIces>ICE38;ICE64;ICE91</SuppressIces>
+        <!-- The owner accepted the WiX v7 OSMF EULA (https://wixtoolset.org/osmf/); wix7 is its EULA ID -->
+        <AcceptEula>wix7</AcceptEula>
+    </PropertyGroup>
+
+    <!-- Require The App's Publish Output (without it the Files glob would pick up this folder) -->
+    <Target Name="RequirePublishDir" BeforeTargets="CoreCompile">
+        <Error
+            Condition="!Exists('$(PublishDir)Layers.exe')"
+            Text="Layers.exe not found in PublishDir '$(PublishDir)'. Publish src/Layers first and pass -p:PublishDir=&lt;publish folder&gt;\" />
+    </Target>
+
+    <!-- Extensions -->
+    <ItemGroup>
+        <PackageReference Include="WixToolset.Util.wixext" />
+    </ItemGroup>
+</Project>

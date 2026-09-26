@@ -1,0 +1,79 @@
+<Window
+    x:Class="Layers.UI.HudHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Layers.UI"
+    Title="Layers HUD">
+
+    <!-- Invisible Anchor For The HUD -->
+    <Grid
+        x:Name="Root"
+        Background="Transparent">
+        <FlyoutBase.AttachedFlyout>
+            <Flyout
+                x:Name="Hud"
+                ShouldConstrainToRootBounds="False"
+                AreOpenCloseAnimationsEnabled="False"
+                Opened="Hud_Opened"
+                Closed="Hud_Closed">
+
+                <!-- Bare Presenter, So The Box Below Is The Whole Visible HUD -->
+                <Flyout.FlyoutPresenterStyle>
+                    <Style TargetType="FlyoutPresenter">
+                        <Setter Property="Padding" Value="0" />
+                        <Setter Property="MinWidth" Value="0" />
+                        <Setter Property="MinHeight" Value="0" />
+                        <Setter Property="Background" Value="Transparent" />
+                        <Setter Property="BorderThickness" Value="0" />
+                        <Setter Property="IsDefaultShadowEnabled" Value="False" />
+                    </Style>
+                </Flyout.FlyoutPresenterStyle>
+
+                <!-- Box Plus The Transparent Gap Under It (Bottom Padding, Set In Code), So The Flyout Clips At The Edge -->
+                <Grid x:Name="Frame">
+
+                    <!-- HUD Box -->
+                    <Grid x:Name="Box">
+                        <Grid.RenderTransform>
+                            <TranslateTransform x:Name="BoxShift" />
+                        </Grid.RenderTransform>
+
+                        <!-- Exit: Slide Down Past The Edge While Fading (Distance And Duration Set In Code) -->
+                        <Grid.Resources>
+                            <Storyboard
+                                x:Name="Exit"
+                                Completed="Exit_Completed">
+                                <DoubleAnimation
+                                    x:Name="ExitSlide"
+                                    Storyboard.TargetName="BoxShift"
+                                    Storyboard.TargetProperty="Y">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseIn" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                                <DoubleAnimation
+                                    Storyboard.TargetName="Box"
+                                    Storyboard.TargetProperty="Opacity"
+                                    To="0">
+                                    <DoubleAnimation.EasingFunction>
+                                        <CubicEase EasingMode="EaseIn" />
+                                    </DoubleAnimation.EasingFunction>
+                                </DoubleAnimation>
+                            </Storyboard>
+                        </Grid.Resources>
+
+                        <!-- Desktop Acrylic In The Box's Own Bounds, So It Moves And Clips With The Box (Corners Match HudFace) -->
+                        <SystemBackdropElement CornerRadius="6">
+                            <SystemBackdropElement.SystemBackdrop>
+                                <local:ActiveAcrylicBackdrop />
+                            </SystemBackdropElement.SystemBackdrop>
+                        </SystemBackdropElement>
+
+                        <!-- Border, Glyph, And Label, Shared With The Settings Preview -->
+                        <local:HudFace x:Name="Face" />
+                    </Grid>
+                </Grid>
+            </Flyout>
+        </FlyoutBase.AttachedFlyout>
+    </Grid>
+</Window>

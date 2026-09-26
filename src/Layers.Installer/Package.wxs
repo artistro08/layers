@@ -1,0 +1,139 @@
+<Wix
+    xmlns="http://wixtoolset.org/schemas/v4/wxs"
+    xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+    <!-- Per-User Package -->
+    <Package
+        Name="Layers"
+        Manufacturer="Devin Green"
+        Version="$(ProductVersion)"
+        UpgradeCode="7F3C2B8E-4A61-4D0B-9E57-2C8A1F6D3B90"
+        Scope="perUser"
+        Compressed="yes">
+
+        <!-- Upgrades Replace Older Versions (after the running app is closed, see Wix4CloseApplications_X64 below) -->
+        <MajorUpgrade
+            DowngradeErrorMessage="A newer version of Layers is already installed."
+            Schedule="afterInstallInitialize" />
+        <MediaTemplate EmbedCab="yes" />
+
+        <!-- Add/Remove Programs Icon -->
+        <Icon Id="LayersIcon" SourceFile="..\..\assets\app.ico" />
+        <Property Id="ARPPRODUCTICON" Value="LayersIcon" />
+
+        <!-- %LocalAppData%\Programs\Layers -->
+        <StandardDirectory Id="LocalAppDataFolder">
+            <Directory Id="ProgramsDir" Name="Programs">
+                <Directory Id="INSTALLFOLDER" Name="Layers" />
+            </Directory>
+        </StandardDirectory>
+
+        <!-- App Files -->
+        <ComponentGroup Id="AppFiles" Directory="INSTALLFOLDER">
+            <Files Include="$(PublishDir)**" />
+        </ComponentGroup>
+
+        <!-- Third-Party Notice (Solid Layers Icon, MIT) -->
+        <Component Id="NoticeFile" Directory="INSTALLFOLDER">
+            <File
+                Id="NoticeFluentUi"
+                Source="..\..\assets\NOTICE-fluentui.txt"
+                Name="NOTICE-fluentui.txt"
+                KeyPath="yes" />
+        </Component>
+
+        <!-- Start Menu Shortcut -->
+        <StandardDirectory Id="ProgramMenuFolder">
+            <Component Id="StartMenuShortcut">
+                <Shortcut
+                    Id="LayersShortcut"
+                    Name="Layers"
+                    Target="[INSTALLFOLDER]Layers.exe"
+                    WorkingDirectory="INSTALLFOLDER"
+                    Icon="LayersIcon" />
+                <RegistryValue
+                    Root="HKCU"
+                    Key="Software\Layers\Installer"
+                    Name="StartMenuShortcut"
+                    Type="integer"
+                    Value="1"
+                    KeyPath="yes" />
+            </Component>
+        </StandardDirectory>
+
+        <!-- Detect The User's Existing Run-At-Sign-In Choice (so an upgrade can't resurrect a value the app's Settings deleted) -->
+        <Property Id="RUNATSIGNINVALUE">
+            <RegistrySearch
+                Id="RunAtSignInSearch"
+                Root="HKCU"
+                Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                Name="Layers"
+                Type="raw" />
+        </Property>
+
+        <!-- Start At Sign-In (fresh install: on by default; upgrade: only if the value still exists - the app's Settings can turn it off) -->
+        <Component Id="RunAtSignIn" Directory="INSTALLFOLDER" Condition="(NOT WIX_UPGRADE_DETECTED) OR RUNATSIGNINVALUE">
+            <RegistryValue
+                Root="HKCU"
+                Key="Software\Microsoft\Windows\CurrentVersion\Run"
+                Name="Layers"
+                Type="string"
+                Value="&quot;[INSTALLFOLDER]Layers.exe&quot;"
+                KeyPath="yes" />
+        </Component>
+
+        <!-- Close The Running App Before Files Change (sends WM_CLOSE, which the app treats as Quit) -->
+        <util:CloseApplication
+            Id="CloseLayers"
+            Target="Layers.exe"
+            CloseMessage="yes"
+            RebootPrompt="no" />
+
+        <!-- Start Layers After Install -->
+        <CustomAction
+            Id="LaunchLayers"
+            Directory="INSTALLFOLDER"
+            ExeCommand="&quot;[INSTALLFOLDER]Layers.exe&quot;"
+            Execute="immediate"
+            Impersonate="yes"
+            Return="asyncNoWait" />
+        <!-- Remove The Run Value On Uninstall Even When RunAtSignIn Wasn't Installed (an upgrade skipped it, then Settings re-enabled it) -->
+        <!-- A RemoveRegistryValue Can't Do This: The RemoveRegistry Table Only Acts When Its Component Is Installed, Never On Uninstall -->
+        <SetProperty
+            Id="RemoveRunValue"
+            Value="&quot;[System64Folder]reg.exe&quot; delete HKCU\Software\Microsoft\Windows\CurrentVersion\Run /v Layers /f"
+            Before="RemoveRunValue"
+            Sequence="execute" />
+        <CustomAction
+            Id="RemoveRunValue"
+            BinaryRef="Wix4UtilCA_X64"
+            DllEntry="WixQuietExec"
+            Execute="deferred"
+            Impersonate="yes"
+            Return="ignore" />
+        <InstallExecuteSequence>
+            <!-- Full Uninstall Only, Not The Old Product's Removal During An Upgrade -->
+            <Custom
+                Action="RemoveRunValue"
+                Before="RemoveRegistryValues"
+                Condition="REMOVE~=&quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
+            <!-- Close Layers Before RemoveFiles/InstallFiles Run, Not After (default scheduling ran after RemoveFiles) -->
+            <Custom
+                Action="override Wix4CloseApplications_X64"
+                After="InstallInitialize" />
+            <!-- Launch On Fresh Install Or Upgrade Only, Not Repair/Modify -->
+            <Custom
+                Action="LaunchLayers"
+                After="InstallFinalize"
+                Condition="NOT Installed OR WIX_UPGRADE_DETECTED" />
+        </InstallExecuteSequence>
+
+        <!-- Everything -->
+        <Feature Id="Main">
+            <ComponentGroupRef Id="AppFiles" />
+            <ComponentRef Id="NoticeFile" />
+            <ComponentRef Id="StartMenuShortcut" />
+            <ComponentRef Id="RunAtSignIn" />
+        </Feature>
+    </Package>
+</Wix>

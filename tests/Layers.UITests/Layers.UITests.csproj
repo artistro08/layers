@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- WinUI Test Exe -->
+    <PropertyGroup>
+        <RootNamespace>Layers.UITests</RootNamespace>
+        <OutputType>Exe</OutputType>
+        <UseWinUI>true</UseWinUI>
+        <EnableMSTestRunner>true</EnableMSTestRunner>
+        <WindowsPackageType>None</WindowsPackageType>
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+        <ApplicationManifest>..\..\src\Layers\app.manifest</ApplicationManifest>
+        <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <IsPackable>false</IsPackable>
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+        <!-- Test names use underscores; tests carry no XML docs -->
+        <NoWarn>$(NoWarn);CA1707;CS1591;CA1515</NoWarn>
+    </PropertyGroup>
+
+    <!-- Packages -->
+    <ItemGroup>
+        <PackageReference Include="MSTest.TestFramework" />
+        <PackageReference Include="MSTest.TestAdapter" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" />
+    </ItemGroup>
+
+    <!-- Projects -->
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Layers.UI\Layers.UI.csproj" />
+        <ProjectReference Include="..\..\src\Layers.Core\Layers.Core.csproj" />
+    </ItemGroup>
+
+    <!-- Test App, Built Like The Real App.xaml -->
+    <ItemGroup>
+        <Page Remove="TestApp.xaml" />
+        <ApplicationDefinition Include="TestApp.xaml" />
+    </ItemGroup>
+
+    <!-- Shared Test Helper -->
+    <ItemGroup>
+        <Compile Include="..\Layers.Tests\TempRegistryKey.cs" Link="TempRegistryKey.cs" />
+    </ItemGroup>
+
+    <!-- UI Tests Share One UI Thread -->
+    <ItemGroup>
+        <AssemblyAttribute Include="Microsoft.VisualStudio.TestTools.UnitTesting.DoNotParallelizeAttribute" />
+    </ItemGroup>
+</Project>

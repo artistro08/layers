@@ -1,0 +1,82 @@
+<Window
+    x:Class="Layers.UI.TrayMenuHost"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Layers.UI"
+    Title="Layers">
+
+    <!-- Invisible Anchor For The Menu -->
+    <Grid
+        x:Name="Root"
+        Background="Transparent">
+        <FlyoutBase.AttachedFlyout>
+            <MenuFlyout
+                x:Name="Menu"
+                Closed="Menu_Closed">
+
+                <!-- Status Row -->
+                <MenuFlyoutItem
+                    x:Name="StatusItem"
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
+                    Text="{x:Bind Model.StatusLabel, Mode=OneWay}"
+                    IsEnabled="False">
+                    <MenuFlyoutItem.Icon>
+                        <PathIcon
+                            Width="16"
+                            Height="16"
+                            Data="M 4,8 A 4,4 0 1 1 12,8 A 4,4 0 1 1 4,8 Z"
+                            Foreground="{x:Bind local:TrayMenuHost.ToneBrush(Model.Tone), Mode=OneWay}" />
+                    </MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+
+                <!-- Status Detail Row -->
+                <MenuFlyoutItem
+                    x:Name="DetailItem"
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
+                    Text="{x:Bind Model.StatusDetail, Mode=OneWay}"
+                    Visibility="{x:Bind Model.HasStatusDetail, Mode=OneWay}"
+                    IsEnabled="False" />
+
+                <!-- Layer Row -->
+                <MenuFlyoutItem
+                    x:Name="LayerItem"
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
+                    Text="{x:Bind Model.LayerLabel, Mode=OneWay}"
+                    IsEnabled="False">
+                    <MenuFlyoutItem.Icon>
+                        <PathIcon
+                            Width="16"
+                            Height="16"
+                            Data="{x:Bind local:Glyphs.Layers(16)}" />
+                    </MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+
+                <MenuFlyoutSeparator />
+
+                <!-- Settings -->
+                <MenuFlyoutItem
+                    x:Name="SettingsItem"
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
+                    Text="Settings…"
+                    Click="Settings_Click">
+                    <MenuFlyoutItem.Icon>
+                        <FontIcon Glyph="&#xE713;" />
+                    </MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+
+                <MenuFlyoutSeparator />
+
+                <!-- Quit -->
+                <MenuFlyoutItem
+                    x:Name="QuitItem"
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
+                    Text="Quit"
+                    Click="Quit_Click">
+                    <MenuFlyoutItem.Icon>
+                        <FontIcon Glyph="&#xE7E8;" />
+                    </MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+            </MenuFlyout>
+        </FlyoutBase.AttachedFlyout>
+    </Grid>
+</Window>

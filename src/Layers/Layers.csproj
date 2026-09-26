@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- WinUI App -->
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <RootNamespace>Layers</RootNamespace>
+        <AssemblyName>Layers</AssemblyName>
+        <UseWinUI>true</UseWinUI>
+        <ApplicationManifest>app.manifest</ApplicationManifest>
+        <ApplicationIcon>..\..\assets\app.ico</ApplicationIcon>
+        <IsAotCompatible>true</IsAotCompatible>
+        <PublishAot>true</PublishAot>
+        <SelfContained>true</SelfContained>
+        <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    </PropertyGroup>
+
+    <!-- Packaging: unpackaged by default, MSIX with -p:WindowsPackageType=MSIX -->
+    <PropertyGroup>
+        <EnableMsixTooling>true</EnableMsixTooling>
+        <WindowsPackageType Condition="'$(WindowsPackageType)' == ''">None</WindowsPackageType>
+        <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+        <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    </PropertyGroup>
+
+    <!-- Lean Publish Payload: English resources only, no .pdb or XML docs (symbols stay in obj for debugging) -->
+    <PropertyGroup>
+        <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+        <CopyOutputSymbolsToPublishDirectory>false</CopyOutputSymbolsToPublishDirectory>
+        <PublishDocumentationFile>false</PublishDocumentationFile>
+        <PublishReferencesDocumentationFiles>false</PublishReferencesDocumentationFiles>
+    </PropertyGroup>
+
+    <!-- Keep Only English WinUI .mui Files (SatelliteResourceLanguages doesn't cover WinUI's native resources) -->
+    <Target Name="RemoveNonEnglishWinUIMui" AfterTargets="AddMicrosoftWindowsAppSDKPayloadFilesFromComponents">
+        <ItemGroup>
+            <None Remove="@(None)" Condition="'%(Extension)' == '.mui' and !$([System.String]::Copy('%(None.Link)').StartsWith('en-', StringComparison.OrdinalIgnoreCase))" />
+        </ItemGroup>
+    </Target>
+
+    <!-- Drop Referenced Projects' .pdb Files From Publish (the AOT exe has no use for them) -->
+    <Target Name="RemovePublishSymbols" AfterTargets="ComputeResolvedFilesToPublishList">
+        <ItemGroup>
+            <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Extension)' == '.pdb'" />
+        </ItemGroup>
+    </Target>
+
+    <!-- Drop .pdb Files From The MSIX Too (no symbols package, so no mspdbcmf.exe warning) -->
+    <Target Name="RemoveMsixSymbols" BeforeTargets="_CalculateInputsForGenerateAppxPackageRecipe">
+        <ItemGroup>
+            <AppxPackagePayload Remove="@(AppxPackagePayload)" Condition="'%(Extension)' == '.pdb'" />
+        </ItemGroup>
+    </Target>
+
+    <!-- Packages -->
+    <ItemGroup>
+        <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" />
+    </ItemGroup>
+
+    <!-- Projects -->
+    <ItemGroup>
+        <ProjectReference Include="..\Layers.Core\Layers.Core.csproj" />
+        <ProjectReference Include="..\Layers.UI\Layers.UI.csproj" />
+    </ItemGroup>
+
+    <!-- Manifests And Assets -->
+    <ItemGroup>
+        <Manifest Include="$(ApplicationManifest)" />
+        <Content Include="..\..\assets\app.ico" Link="app.ico" CopyToOutputDirectory="PreserveNewest" />
+        <Content Include="Assets\*.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+
+    <!-- Third-Party Notice In The MSIX Only (the MSI ships it through Package.wxs, so the publish folder must not) -->
+    <ItemGroup Condition="'$(WindowsPackageType)' == 'MSIX'">
+        <Content Include="..\..\assets\NOTICE-fluentui.txt" Link="NOTICE-fluentui.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    </ItemGroup>
+</Project>

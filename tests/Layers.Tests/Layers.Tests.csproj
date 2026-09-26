@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- Test Project -->
+    <PropertyGroup>
+        <RootNamespace>Layers.Tests</RootNamespace>
+        <OutputType>Exe</OutputType>
+        <EnableMSTestRunner>true</EnableMSTestRunner>
+        <!-- The App Reference Only Orders The Build (Lifecycle Tests Launch It), So Its Self-Contained Output Is Fine -->
+        <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
+        <IsPackable>false</IsPackable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <!-- Test names use underscores; tests carry no XML docs; inline arrays and range-slice copies are fine at test scale -->
+        <NoWarn>$(NoWarn);CA1707;CS1591;CA1515;CA1861;CA1832</NoWarn>
+    </PropertyGroup>
+
+    <!-- Packages -->
+    <ItemGroup>
+        <PackageReference Include="MSTest.TestFramework" />
+        <PackageReference Include="MSTest.TestAdapter" />
+        <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+        <PackageReference Include="System.IO.Hashing" />
+    </ItemGroup>
+
+    <!-- Projects -->
+    <ItemGroup>
+        <ProjectReference Include="..\..\src\Layers.Core\Layers.Core.csproj" />
+        <ProjectReference Include="..\..\src\Layers\Layers.csproj" ReferenceOutputAssembly="false" />
+    </ItemGroup>
+
+    <!-- Parallel Test Execution -->
+    <ItemGroup>
+        <AssemblyAttribute Include="Microsoft.VisualStudio.TestTools.UnitTesting.ParallelizeAttribute">
+            <Workers>0</Workers>
+            <Workers_IsLiteral>true</Workers_IsLiteral>
+            <Scope>Microsoft.VisualStudio.TestTools.UnitTesting.ExecutionScope.MethodLevel</Scope>
+            <Scope_IsLiteral>true</Scope_IsLiteral>
+        </AssemblyAttribute>
+    </ItemGroup>
+</Project>

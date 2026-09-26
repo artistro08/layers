@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <!-- WinUI Class Library -->
+    <PropertyGroup>
+        <RootNamespace>Layers.UI</RootNamespace>
+        <UseWinUI>true</UseWinUI>
+        <IsAotCompatible>true</IsAotCompatible>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    </PropertyGroup>
+
+    <!-- Packages -->
+    <ItemGroup>
+        <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.InteractiveExperiences" />
+        <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" />
+    </ItemGroup>
+
+    <!-- Projects -->
+    <ItemGroup>
+        <ProjectReference Include="..\Layers.Core\Layers.Core.csproj" />
+    </ItemGroup>
+
+    <!-- Test Access -->
+    <ItemGroup>
+        <InternalsVisibleTo Include="Layers.UITests" />
+    </ItemGroup>
+</Project>

@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+    xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+    xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+    xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+    xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+    IgnorableNamespaces="uap uap5 rescap">
+
+    <!-- Identity -->
+    <!-- TODO: Publisher must equal the signing certificate's subject exactly; blocked until the owner supplies the certificate -->
+    <Identity
+        Name="Artistro08.Layers"
+        Publisher="CN=Devin Green"
+        Version="2.0.0.0" />
+
+    <!-- Store Properties -->
+    <Properties>
+        <DisplayName>Layers</DisplayName>
+        <PublisherDisplayName>Devin Green</PublisherDisplayName>
+        <Logo>Assets\StoreLogo.png</Logo>
+    </Properties>
+
+    <!-- Target -->
+    <Dependencies>
+        <TargetDeviceFamily
+            Name="Windows.Desktop"
+            MinVersion="10.0.19041.0"
+            MaxVersionTested="10.0.26100.0" />
+    </Dependencies>
+
+    <!-- Resources -->
+    <Resources>
+        <Resource Language="x-generate" />
+    </Resources>
+
+    <!-- Application -->
+    <Applications>
+        <Application
+            Id="App"
+            Executable="$targetnametoken$.exe"
+            EntryPoint="$targetentrypoint$">
+            <uap:VisualElements
+                DisplayName="Layers"
+                Description="Tray indicator for the active HID Remapper layer"
+                BackgroundColor="transparent"
+                Square150x150Logo="Assets\Square150x150Logo.png"
+                Square44x44Logo="Assets\Square44x44Logo.png" />
+
+            <!-- Start At Sign-In -->
+            <Extensions>
+                <uap5:Extension Category="windows.startupTask">
+                    <uap5:StartupTask
+                        TaskId="LayersStartup"
+                        Enabled="true"
+                        DisplayName="Layers" />
+                </uap5:Extension>
+            </Extensions>
+        </Application>
+    </Applications>
+
+    <!-- Capabilities: full trust and the two HID Remapper collections, nothing else -->
+    <Capabilities>
+        <rescap:Capability Name="runFullTrust" />
+        <DeviceCapability Name="humaninterfacedevice">
+            <Device Id="any">
+                <Function Type="usage:FF00 0020" />
+                <Function Type="usage:FF00 0021" />
+            </Device>
+        </DeviceCapability>
+    </Capabilities>
+</Package>

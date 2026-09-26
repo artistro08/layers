@@ -1,0 +1,38 @@
+<UserControl
+    x:Class="Layers.UI.HudPreview"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Layers.UI">
+
+    <!-- Rounded Strip Of The Desktop's Bottom, With A Neutral Fill Wherever There's No Wallpaper To Draw -->
+    <!-- The Corner Radius Also Clips The Demo's Exit Slide At The Strip's Bottom Edge -->
+    <Grid
+        Height="150"
+        CornerRadius="8"
+        Background="{ThemeResource SolidBackgroundFillColorSecondaryBrush}"
+        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+        BorderThickness="1">
+
+        <!-- The User's Wallpaper, Filled Across And Anchored To Its Bottom (Set In Code) -->
+        <Border>
+            <Border.Background>
+                <ImageBrush
+                    x:Name="Wallpaper"
+                    Stretch="UniformToFill"
+                    AlignmentY="Bottom" />
+            </Border.Background>
+        </Border>
+
+        <!-- The HUD At Real Size, Bottom Center, The Real Gap Above The Edge (Set In Code), Hidden Until A Replay -->
+        <local:HudFace
+            x:Name="Face"
+            Opacity="0"
+            HorizontalAlignment="Center"
+            VerticalAlignment="Bottom"
+            Background="{ThemeResource AcrylicBackgroundFillColorDefaultBrush}">
+            <local:HudFace.RenderTransform>
+                <TranslateTransform x:Name="FaceShift" />
+            </local:HudFace.RenderTransform>
+        </local:HudFace>
+    </Grid>
+</UserControl>

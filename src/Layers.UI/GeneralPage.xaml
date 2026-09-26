@@ -1,0 +1,192 @@
+<Page
+    x:Class="Layers.UI.GeneralPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:Layers.UI"
+    xmlns:vm="using:Layers.Core.ViewModels"
+    NavigationCacheMode="Required">
+
+    <!-- Content, 24 DIPs Below The Title Bar -->
+    <ScrollViewer>
+        <StackPanel
+            Padding="24"
+            Spacing="16">
+
+            <!-- General Section -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="General" />
+                <ToggleSwitch
+                    x:Name="StartupSwitch"
+                    OnContent="Run on Startup"
+                    OffContent="Run on Startup"
+                    IsOn="{x:Bind Model.StartAtSignIn, Mode=OneWay}"
+                    IsEnabled="{x:Bind Model.StartupControllable, Mode=OneWay}"
+                    Toggled="StartupSwitch_Toggled"
+                    AccessKey="S"
+                    AutomationProperties.Name="Run on Startup" />
+                <TextBlock
+                    x:Name="StartupNote"
+                    Text="{x:Bind Model.StartupNote, Mode=OneWay}"
+                    Visibility="{x:Bind Model.HasStartupNote, Mode=OneWay}"
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+            </StackPanel>
+
+            <!-- Divider -->
+            <Rectangle
+                Height="1"
+                Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <!-- HUD Section -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="HUD" />
+
+                <!-- What The HUD Is, With Room Below It -->
+                <TextBlock
+                    x:Name="HudExplanation"
+                    Margin="0,0,0,8"
+                    Text="The HUD (Heads Up Display) is a small pop-up that appears at the bottom of your screen when you switch layers on your HID Remapper."
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+
+                <!-- Show HUD Beside The Knob, With The Layer Picker At The Row's Right Edge -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <ToggleSwitch
+                        x:Name="HudSwitch"
+                        OnContent="Show HUD"
+                        OffContent="Show HUD"
+                        IsOn="{x:Bind Model.HudEnabled, Mode=TwoWay}"
+                        AccessKey="H"
+                        AutomationProperties.Name="Show HUD" />
+
+                    <!-- Layer Picker -->
+                    <ComboBox
+                        x:Name="LayerPicker"
+                        Grid.Column="1"
+                        VerticalAlignment="Center"
+                        PlaceholderText="Choose layers..."
+                        SelectedIndex="-1"
+                        IsEnabled="{x:Bind Model.HudEnabled, Mode=OneWay}"
+                        AutomationProperties.Name="Show for these layers"
+                        SelectionChanged="LayerPicker_SelectionChanged"
+                        DropDownOpened="LayerPicker_DropDownOpened">
+
+                        <!-- Rows Without Padding, So The Checkbox Fills Them And Takes The Click Instead Of The Row -->
+                        <ComboBox.ItemContainerStyle>
+                            <Style
+                                TargetType="ComboBoxItem"
+                                BasedOn="{StaticResource DefaultComboBoxItemStyle}">
+                                <Setter Property="Padding" Value="0" />
+                                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                <Setter Property="VerticalContentAlignment" Value="Stretch" />
+                            </Style>
+                        </ComboBox.ItemContainerStyle>
+
+                        <!-- Layer Checkboxes -->
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate x:DataType="vm:LayerOptionViewModel">
+                                <!-- Inset By A Clear Border, Not A Margin, So The Gap Left Of The Box Still Clicks The Checkbox -->
+                                <CheckBox
+                                    Padding="8,5,11,7"
+                                    BorderThickness="11,0,0,0"
+                                    HorizontalAlignment="Stretch"
+                                    VerticalAlignment="Stretch"
+                                    Content="{x:Bind Label}"
+                                    IsChecked="{x:Bind IsShown, Mode=TwoWay}"
+                                    IsEnabled="{x:Bind IsEnabled, Mode=OneWay}"
+                                    IsTabStop="False"
+                                    AutomationProperties.Name="{x:Bind Label}" />
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                        <!-- /Layer Checkboxes -->
+                    </ComboBox>
+                    <!-- /Layer Picker -->
+                </Grid>
+
+                <!-- Preview, Dimmed And Stopped While Show HUD Is Off -->
+                <Grid>
+                    <local:HudPreview
+                        x:Name="Preview"
+                        IsEnabled="{x:Bind Model.HudEnabled, Mode=OneWay}" />
+
+                    <!-- Replay The Demo With The Current Duration, Clear Of The HUD, In The Accent Color, Off With The HUD -->
+                    <Button
+                        x:Name="PlayButton"
+                        Margin="8"
+                        HorizontalAlignment="Right"
+                        VerticalAlignment="Top"
+                        Style="{StaticResource AccentButtonStyle}"
+                        IsEnabled="{x:Bind Model.HudEnabled, Mode=OneWay}"
+                        AutomationProperties.Name="Play Animation"
+                        Click="PlayButton_Click">
+
+                        <!-- Icon And Text Centered On One Line -->
+                        <StackPanel
+                            Orientation="Horizontal"
+                            Spacing="8">
+                            <FontIcon
+                                x:Name="PlayIcon"
+                                VerticalAlignment="Center"
+                                FontSize="14" />
+                            <TextBlock
+                                VerticalAlignment="Center"
+                                Text="Play Animation" />
+                        </StackPanel>
+                    </Button>
+                </Grid>
+                <!-- /Preview -->
+
+                <!-- Show Duration: Header, Then A Speedometer Left Of The Slider -->
+                <Grid
+                    ColumnSpacing="12"
+                    RowSpacing="4">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock
+                        x:Name="HoldHeader"
+                        Grid.ColumnSpan="2"
+                        Text="HUD Show Duration (In Seconds)" />
+                    <FontIcon
+                        x:Name="HoldIcon"
+                        Grid.Row="1"
+                        VerticalAlignment="Center"
+                        FontSize="16"
+                        AutomationProperties.AccessibilityView="Raw" />
+                    <Slider
+                        x:Name="HoldSlider"
+                        Grid.Row="1"
+                        Grid.Column="1"
+                        Minimum="0.5"
+                        Maximum="5"
+                        StepFrequency="0.1"
+                        SmallChange="0.1"
+                        LargeChange="0.5"
+                        TickPlacement="BottomRight"
+                        TickFrequency="0.5"
+                        ValueChanged="HoldSlider_ValueChanged"
+                        Value="{x:Bind Model.HudHoldSeconds, Mode=TwoWay}"
+                        IsEnabled="{x:Bind Model.HudEnabled, Mode=OneWay}"
+                        AccessKey="D"
+                        AutomationProperties.Name="HUD Show Duration (In Seconds)" />
+                </Grid>
+                <!-- /Show Duration -->
+            </StackPanel>
+            <!-- /HUD Section -->
+        </StackPanel>
+    </ScrollViewer>
+</Page>
