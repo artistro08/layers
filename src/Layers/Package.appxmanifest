@@ -6,17 +6,16 @@
     xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
     IgnorableNamespaces="uap uap5 rescap">
 
-    <!-- Identity -->
-    <!-- TODO: Publisher must equal the signing certificate's subject exactly; blocked until the owner supplies the certificate -->
+    <!-- Identity: From Partner Center › Product Identity (Store ID 9N65CFXGLKXB); The Store Signs With This Publisher -->
     <Identity
-        Name="Artistro08.Layers"
-        Publisher="CN=Devin Green"
-        Version="2.0.1.0" />
+        Name="artistro08.Layers-HID"
+        Publisher="CN=BF59F607-536B-4252-888F-7B3ED9D56F96"
+        Version="2.0.2.0" />
 
     <!-- Store Properties -->
     <Properties>
-        <DisplayName>Layers</DisplayName>
-        <PublisherDisplayName>Devin Green</PublisherDisplayName>
+        <DisplayName>Layers - HID</DisplayName>
+        <PublisherDisplayName>artistro08</PublisherDisplayName>
         <Logo>Assets\StoreLogo.png</Logo>
     </Properties>
 
@@ -40,7 +39,7 @@
             Executable="$targetnametoken$.exe"
             EntryPoint="$targetentrypoint$">
             <uap:VisualElements
-                DisplayName="Layers"
+                DisplayName="Layers - HID"
                 Description="Tray indicator for the active HID Remapper layer"
                 BackgroundColor="transparent"
                 Square150x150Logo="Assets\Square150x150Logo.png"

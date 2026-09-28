@@ -33,8 +33,10 @@
             <!-- Caption Buttons: Minimize And Close Only, Drawn Here Since Windows Can't Hide Maximize Alone -->
             <!-- Stock Buttons Restyled Through Their Resources To Match The Stock Windows 11 Caption Buttons -->
             <TitleBar.RightHeader>
+                <!-- BorderBrush Only Carries The Inactive Glyph Color, Kept Current With The Theme (No Border Is Drawn) -->
                 <StackPanel
                     x:Name="CaptionButtons"
+                    BorderBrush="{ThemeResource TextFillColorDisabledBrush}"
                     Orientation="Horizontal">
                     <StackPanel.Resources>
                         <ResourceDictionary>

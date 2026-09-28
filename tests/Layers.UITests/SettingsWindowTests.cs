@@ -218,6 +218,12 @@ public sealed class SettingsWindowTests : IDisposable
     [TestMethod]
     public Task GeneralPage_FitsWithoutScrolling_WithNoSpareRoom() => UiHost.RunAsync(async () =>
     {
+        // The Fixed Height Is Measured At 100% Windows Text Size; Larger Text Needs The Scrollbar
+        if (new Windows.UI.ViewManagement.UISettings().TextScaleFactor != 1.0)
+        {
+            Assert.Inconclusive("Windows text size isn't 100%, so the fixed height doesn't apply");
+        }
+
         var window = Open();
         await UiHost.Settle();
 
@@ -273,9 +279,16 @@ public sealed class SettingsWindowTests : IDisposable
         Assert.IsLessThanOrEqualTo(text.DesiredSize.Width + 2, presenter.ActualWidth, roomy);
 
         // Opened, The Shown Choice's Row Sits Over The Box, As Wide As It
-        ((IExpandCollapseProvider)FrameworkElementAutomationPeer.CreatePeerForElement(picker)).Expand();
-        await UiHost.Settle();
-        var row      = (FrameworkElement)picker.ContainerFromIndex(2);
+        // Retried, Since Focus Moving Elsewhere (Someone Using The Desktop) Light-Dismisses The List
+        FrameworkElement? row = null;
+        for (var attempt = 0; attempt < 3 && row is null; attempt++)
+        {
+            ((IExpandCollapseProvider)FrameworkElementAutomationPeer.CreatePeerForElement(picker)).Expand();
+            await UiHost.Settle();
+            row = picker.ContainerFromIndex(2) as FrameworkElement;
+        }
+
+        Assert.IsNotNull(row, "the list closed before its rows could be measured (focus moved away?)");
         var box      = Bounds(picker);
         var rowBound = Bounds(row);
         ((IExpandCollapseProvider)FrameworkElementAutomationPeer.CreatePeerForElement(picker)).Collapse();

@@ -94,7 +94,13 @@ public sealed partial class GeneralPage : Page
             return;
         }
 
+        // Not Laid Out Yet: Left Unset, So The Next Load Measures Instead Of Locking In A Zero Width
         MonitorPicker.UpdateLayout();
+        if (MonitorPicker.ActualWidth <= 0)
+        {
+            return;
+        }
+
         var chrome = MonitorPicker.ActualWidth - TextWidth(MonitorPicker.SelectedItem as string ?? string.Empty);
         MonitorPicker.Width = Math.Ceiling(chrome + choices.Max(TextWidth));
     }

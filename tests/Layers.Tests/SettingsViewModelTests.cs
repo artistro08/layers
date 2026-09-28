@@ -243,6 +243,6 @@ public sealed class SettingsViewModelTests : IDisposable
     [TestMethod]
     public void Version_IsAssemblyVersion()
     {
-        Assert.AreEqual("2.0.1", Create().Version);
+        Assert.AreEqual("2.0.2", Create().Version);
     }
 }

@@ -229,6 +229,7 @@ public sealed partial class SettingsWindow : Window
     }
 
     // The Stock Disabled Text Color While Inactive, The Button's Own Otherwise
+    // Read From The Panel's ThemeResource, Since An Application Lookup Returns The Launch Theme's Brush
     // Back To Rest On Deactivation Too, Since A Minimize Takes The Window Away With No Pointer Exit
     // Activation Leaves The State Alone, So A Press That Activated The Window Still Shows
     private void ResetCaptionButtons(bool inactive)
@@ -244,7 +245,7 @@ public sealed partial class SettingsWindow : Window
             if (inactive)
             {
                 VisualStateManager.GoToState(button, "Normal", false);
-                button.Foreground = (Brush)Application.Current.Resources["TextFillColorDisabledBrush"];
+                button.Foreground = CaptionButtons.BorderBrush;
             }
             else
             {

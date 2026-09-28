@@ -24,6 +24,8 @@ Uninstall from Settings → Apps.
 
 ## Settings
 
+![Layers Settings, General page](assets/screenshots/settings-general.png)
+
 Click the tray icon and choose **Settings…**. Under **HUD**, turn **Show HUD** off entirely, or use **Choose layers...** to silence it for individual layers — a silenced layer stays silent in both directions, so a muted hold-to-activate layer will not announce the layer you land back on either. **Run on Startup** turns start at sign-in on or off.
 
 Stored under `HKCU\Software\Layers`.

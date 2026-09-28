@@ -108,7 +108,8 @@ Invoke-Step "Build MSIX" {
 $msix = Get-ChildItem $msixOut -Recurse -Filter *.msix | Select-Object -First 1
 if (-not $msix) { throw "Build MSIX produced no .msix under $msixOut" }
 
+# Left Unsigned For Partner Center, Which Signs It With The Store Identity
+# GitHub Releases Ship The Store-Signed Copy, Downloaded From Partner Center After Certification
 Copy-Item $msix.FullName (Join-Path $dist "Layers-$version.msix")
-Invoke-Sign (Join-Path $dist "Layers-$version.msix")
 
 Write-Host "Done: $dist" -ForegroundColor Green
