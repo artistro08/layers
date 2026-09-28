@@ -6,6 +6,10 @@
 
 Windows 11 tray indicator for the active [HID Remapper](https://github.com/jfedor2/hid-remapper) layer.
 
+<a href="https://apps.microsoft.com/detail/9N65CFXGLKXB?mode=direct">
+    <img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from Microsoft" width="200">
+</a>
+
 </div>
 
 The tray icon shows the layer you are on. Switch layers on your peripheral and it updates instantly, with an optional heads-up display at the bottom of the screen. Click the icon for status and settings.
@@ -18,7 +22,7 @@ https://github.com/user-attachments/assets/adcb7c98-7fc8-4c50-9145-f2db5c19f211
 
 ## Install
 
-Download `Layers-<version>.msi` from the [latest release](../../releases/latest) and run it. It installs per-user, so there's no UAC prompt. Prefer MSIX? Download `Layers-<version>.msix` instead. Plug in a flashed HID Remapper and it works — nothing to configure.
+Get it from the [Microsoft Store](https://apps.microsoft.com/detail/9N65CFXGLKXB), or download `Layers-<version>.msi` from the [latest release](../../releases/latest) and run it. It installs per-user, so there's no UAC prompt. Prefer MSIX? Download `Layers-<version>.msix` instead. Plug in a flashed HID Remapper and it works — nothing to configure.
 
 Uninstall from Settings → Apps.
 
