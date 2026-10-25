@@ -16,8 +16,9 @@ namespace Layers.Core.Services;
 /// Every 2 seconds it checks our slot still holds the expression. The web config tool's "load config" sends
 /// CLEAR_EXPRESSIONS, which wipes it. After 2 misses in a row it reinstalls and resets the layer to 0, because RESUME
 /// resets the firmware's layer state. Waiting for 2 misses keeps the append clear of the tool's CLEAR, write, PERSIST
-/// burst, so our expression never lands in the user's flash. When the slot checks out, Monitor mode is switched back
-/// on, because the tool switches it off on connect and when leaving its Monitor tab.
+/// burst, so our expression never lands in the user's flash. When the slot checks out and no monitor report arrived
+/// since the last tick, Monitor mode is switched back on, because the tool switches it off on connect and when
+/// leaving its Monitor tab. Reports flowing prove it's on, so a busy device never gets that write.
 /// </para>
 /// <para>
 /// The config collection is shared with the web config tool, and replies carry no command tag, so a reply can belong
@@ -273,16 +274,20 @@ public sealed class DeviceService : IAsyncDisposable
         // Install
         var (status, slot) = await InstallAsync(pair.Config, token).ConfigureAwait(false);
 
+        // Any Monitor Report Since The Last Tick Proves Monitor Mode Is Still On; Install Just Turned It On
+        var sawReport = true;
+
         // Live Layer Reports
         void OnInput(object? sender, byte[] report)
         {
-            if (!Protocol.TryParseMonitorReport(report, out var layers))
-            {
-                return;
-            }
-
             lock (_gate)
             {
+                sawReport = true;
+                if (!Protocol.TryParseMonitorReport(report, out var layers))
+                {
+                    return;
+                }
+
                 // Nothing To Show Until The Session Is Announced
                 if (token.IsCancellationRequested || _state.Status == DeviceStatus.Disconnected)
                 {
@@ -309,10 +314,23 @@ public sealed class DeviceService : IAsyncDisposable
                     continue;
                 }
 
+                bool reported;
+                lock (_gate)
+                {
+                    reported  = sawReport;
+                    sawReport = false;
+                }
+
                 if (slot is byte current && await SlotHoldsOursAsync(pair.Config, current, token).ConfigureAwait(false))
                 {
                     misses = 0;
-                    await ReassertMonitorAsync(pair.Config, token).ConfigureAwait(false);
+
+                    // Silence Can Mean Idle Or Monitor Off, And Only The Latter Needs A Write
+                    if (!reported)
+                    {
+                        await ReassertMonitorAsync(pair.Config, token).ConfigureAwait(false);
+                    }
+
                     continue;
                 }
 
@@ -326,6 +344,11 @@ public sealed class DeviceService : IAsyncDisposable
                 try
                 {
                     (status, slot) = await InstallAsync(pair.Config, token).ConfigureAwait(false);
+                    lock (_gate)
+                    {
+                        sawReport = true;
+                    }
+
                     Publish(new DeviceState(status, LayerMask.Base), token);
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
@@ -379,8 +402,7 @@ public sealed class DeviceService : IAsyncDisposable
 
     private static async Task ReassertMonitorAsync(IHidChannel config, CancellationToken token)
     {
-        // Monitor Mode Is One Shared Switch On The Device: The Web Config Tool Turns It Off On Connect And When Leaving
-        // Its Monitor Tab, Which Silences Our Layer Reports. Turning It Back On Each Tick Keeps The Tray Live.
+        // Monitor Mode Is One Shared Switch On The Device, And The Web Config Tool Turns It Off
         try
         {
             await config.SendFeatureAsync(Protocol.SetMonitorEnabled(true), token).ConfigureAwait(false);

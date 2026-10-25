@@ -200,17 +200,42 @@ public sealed class DeviceServiceTests : IAsyncDisposable
     }
 
     [TestMethod]
-    public async Task Reverify_TurnsMonitorBackOn()
+    public async Task Reverify_TurnsMonitorBackOnAfterASilentTick()
     {
         await ConnectAsync();
 
-        // The Web Config Tool Turns Monitor Off When It Connects
+        // The Web Config Tool Turns Monitor Off When It Connects; The First Tick Still Trusts The Install
         Config.MonitorEnabled = false;
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
+        await Eventually.Settle();
+        Assert.IsFalse(Config.MonitorEnabled);
 
+        // A Second Silent Tick Turns It Back On: Slot Read, Then Monitor On, Nothing Else
         _time.Advance(DeviceService.VerifyInterval);
         await Eventually.Until(() => Config.MonitorEnabled);
 
+        CollectionAssert.AreEqual(new byte[] { Protocol.CmdGetExpression, Protocol.CmdSetMonitorEnabled }, Config.Commands.TakeLast(2).ToArray());
         Assert.AreEqual(1, Config.Count(Protocol.CmdAppendToExpression), "re-enabling monitor is not a reinstall");
+    }
+
+    [TestMethod]
+    public async Task Reverify_LeavesMonitorAloneWhileReportsFlow()
+    {
+        await ConnectAsync();
+        Config.MonitorEnabled = false;
+
+        // Reports Arriving Prove Monitor Is On, So No Tick Writes To It
+        for (var tick = 0; tick < 3; tick++)
+        {
+            _source.Monitor.Raise(Replies.Monitor((Protocol.SentinelUsage, 1)));
+            _time.Advance(DeviceService.VerifyInterval);
+            await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10 + tick);
+        }
+
+        await Eventually.Settle();
+        Assert.IsFalse(Config.MonitorEnabled);
+        Assert.AreEqual(1, Config.Count(Protocol.CmdSetMonitorEnabled), "only the install turned monitor on");
     }
 
     [TestMethod]

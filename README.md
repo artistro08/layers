@@ -42,7 +42,7 @@ The firmware has no command for it, so on connect the app writes the expression 
 
 Requires firmware config version 18. If all eight expression slots are in use, the tray shows connected but cannot read the layer.
 
-The device is opened with shared access, so the [web config tool](https://www.jfedor.org/hid-remapper/) can connect while Layers is running, and Layers connects while the tool is open.
+The device is opened with shared access, so the [web config tool](https://www.jfedor.org/hid-remapper/) can connect while Layers is running, and Layers connects while the tool is open. The tool switches Monitor mode off when it connects and when you leave its Monitor tab; Layers switches it back on within about 4 seconds, and a layer switched during that gap shows once you switch again.
 
 ## Building
 
