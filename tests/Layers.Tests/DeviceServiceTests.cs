@@ -200,6 +200,20 @@ public sealed class DeviceServiceTests : IAsyncDisposable
     }
 
     [TestMethod]
+    public async Task Reverify_TurnsMonitorBackOn()
+    {
+        await ConnectAsync();
+
+        // The Web Config Tool Turns Monitor Off When It Connects
+        Config.MonitorEnabled = false;
+
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => Config.MonitorEnabled);
+
+        Assert.AreEqual(1, Config.Count(Protocol.CmdAppendToExpression), "re-enabling monitor is not a reinstall");
+    }
+
+    [TestMethod]
     public async Task Reverify_TickRightAfterConnectKept()
     {
         // Time Moves The Instant Connected Is Announced

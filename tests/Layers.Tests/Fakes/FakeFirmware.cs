@@ -19,7 +19,7 @@ internal sealed class FakeConfigChannel : IHidChannel
     public Exception? SendFailure { get; set; }
     public int SendAttempts { get; private set; }
     public Action? OnSend { get; set; }
-    public bool MonitorEnabled { get; private set; }
+    public bool MonitorEnabled { get; set; }
     public bool Disposed { get; set; }
 
     public event EventHandler<byte[]>? InputReport { add { } remove { } }

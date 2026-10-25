@@ -16,7 +16,8 @@ namespace Layers.Core.Services;
 /// Every 2 seconds it checks our slot still holds the expression. The web config tool's "load config" sends
 /// CLEAR_EXPRESSIONS, which wipes it. After 2 misses in a row it reinstalls and resets the layer to 0, because RESUME
 /// resets the firmware's layer state. Waiting for 2 misses keeps the append clear of the tool's CLEAR, write, PERSIST
-/// burst, so our expression never lands in the user's flash.
+/// burst, so our expression never lands in the user's flash. When the slot checks out, Monitor mode is switched back
+/// on, because the tool switches it off on connect and when leaving its Monitor tab.
 /// </para>
 /// <para>
 /// The config collection is shared with the web config tool, and replies carry no command tag, so a reply can belong
@@ -311,6 +312,7 @@ public sealed class DeviceService : IAsyncDisposable
                 if (slot is byte current && await SlotHoldsOursAsync(pair.Config, current, token).ConfigureAwait(false))
                 {
                     misses = 0;
+                    await ReassertMonitorAsync(pair.Config, token).ConfigureAwait(false);
                     continue;
                 }
 
@@ -373,6 +375,21 @@ public sealed class DeviceService : IAsyncDisposable
         return choice.Kind == SlotChoiceKind.NoneFree
             ? (DeviceStatus.NoSlot, null)
             : (DeviceStatus.Connected, choice.Slot);
+    }
+
+    private static async Task ReassertMonitorAsync(IHidChannel config, CancellationToken token)
+    {
+        // Monitor Mode Is One Shared Switch On The Device: The Web Config Tool Turns It Off On Connect And When Leaving
+        // Its Monitor Tab, Which Silences Our Layer Reports. Turning It Back On Each Tick Keeps The Tray Live.
+        try
+        {
+            await config.SendFeatureAsync(Protocol.SetMonitorEnabled(true), token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Not Fatal: The Tool Suspends The Device Mid-Save, So A Refused Write Just Means Try Again Next Tick
+            Trace.TraceInformation("monitor re-enable failed: {0}", ex.Message);
+        }
     }
 
     private async Task<bool> SlotHoldsOursAsync(IHidChannel config, byte slot, CancellationToken token)
