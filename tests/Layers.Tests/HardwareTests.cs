@@ -4,7 +4,9 @@ using Layers.Core.Services;
 namespace Layers.Tests;
 
 /// Needs a real HID Remapper on config version 18. Excluded from the default run.
+/// One device, one session at a time: two parallel sessions would read each other's replies.
 [TestClass]
+[DoNotParallelize]
 public sealed class HardwareTests
 {
     public TestContext TestContext { get; set; } = null!;
@@ -37,6 +39,35 @@ public sealed class HardwareTests
         var result = await settled.Task.WaitAsync(TimeSpan.FromSeconds(15));
 
         Assert.AreEqual(DeviceStatus.Connected, result.Status, $"device reported {result.Status}");
+    }
+
+    [TestMethod]
+    [TestCategory("Hardware")]
+    [Timeout(30_000)]
+    public async Task RealDevice_SharesConfigCollectionWithWebConfigTool()
+    {
+        await RequireDeviceAsync();
+        var deviceId = (await WinRtHidDeviceSource.FindConfigDeviceIdsAsync())[0];
+
+        // The Web Config Tool Already Holds The Config Collection Shared Read/Write, Like WebHID Does
+        using var tool          = File.OpenHandle(deviceId, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        await using var service = new DeviceService(new WinRtHidDeviceSource(), TimeProvider.System);
+        var settled             = new TaskCompletionSource<DeviceState>();
+        service.StateChanged   += (_, state) =>
+        {
+            if (state.Status != DeviceStatus.Disconnected)
+            {
+                settled.TrySetResult(state);
+            }
+        };
+
+        service.Start();
+        var result = await settled.Task.WaitAsync(TimeSpan.FromSeconds(15));
+        Assert.AreEqual(DeviceStatus.Connected, result.Status, $"device reported {result.Status} while the tool held the config collection");
+
+        // And The Tool Can Still Open It While We Hold It
+        using var again = File.OpenHandle(deviceId, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite);
+        Assert.IsFalse(again.IsInvalid);
     }
 
     [TestMethod]

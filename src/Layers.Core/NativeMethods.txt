@@ -63,3 +63,5 @@ MonitorFromWindow
 GetMonitorInfo
 MONITORINFO
 GetClassName
+HidD_SetFeature
+HidD_GetFeature

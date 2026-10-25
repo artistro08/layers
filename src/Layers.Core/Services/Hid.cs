@@ -5,7 +5,8 @@ namespace Layers.Core.Services;
 /// </summary>
 /// <remarks>
 /// The HID Remapper exposes config (feature reports) and monitor (input reports) as two collections, which Windows
-/// shows as two devices. <c>WinRtHidChannel</c> is the real implementation. Tests use a firmware fake.
+/// shows as two devices. <c>Win32HidChannel</c> (config) and <c>WinRtHidChannel</c> (monitor) are the real
+/// implementations. Tests use a firmware fake.
 /// </remarks>
 public interface IHidChannel : IDisposable
 {

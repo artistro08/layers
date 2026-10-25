@@ -42,6 +42,8 @@ The firmware has no command for it, so on connect the app writes the expression 
 
 Requires firmware config version 18. If all eight expression slots are in use, the tray shows connected but cannot read the layer.
 
+The device is opened with shared access, so the [web config tool](https://www.jfedor.org/hid-remapper/) can connect while Layers is running, and Layers connects while the tool is open.
+
 ## Building
 
 You'll need the [.NET SDK 10](https://dotnet.microsoft.com/download) and the Visual Studio C++ build tools (for the Native AOT link step). Then run:
