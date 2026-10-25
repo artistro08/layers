@@ -19,6 +19,11 @@ namespace Layers.Core.Services;
 /// burst, so our expression never lands in the user's flash.
 /// </para>
 /// <para>
+/// The config collection is shared with the web config tool, and replies carry no command tag, so a reply can belong
+/// to the tool's request. A verify miss is harmless on its own. Reads that would lead to a write or to sleeping on a
+/// version mismatch are confirmed with a second read first.
+/// </para>
+/// <para>
 /// Any session error shows Disconnected and retries after 2 seconds while the device is present. Unplugging cancels
 /// the session. <see cref="StateChanged"/> is raised on background threads, in order, under an internal lock:
 /// handlers must be quick and must marshal to the UI thread themselves.
@@ -253,6 +258,12 @@ public sealed class DeviceService : IAsyncDisposable
         var version = await ReadAsync<byte>(pair.Config, Protocol.GetConfig(), Protocol.TryParseConfigVersion, token).ConfigureAwait(false);
         if (version != Protocol.ConfigVersion)
         {
+            // Read Again Before Sleeping On It: A Foreign Reply From The Web Config Tool Can Parse As A Version
+            version = await ReadAsync<byte>(pair.Config, Protocol.GetConfig(), Protocol.TryParseConfigVersion, token).ConfigureAwait(false);
+        }
+
+        if (version != Protocol.ConfigVersion)
+        {
             Publish(new DeviceState(DeviceStatus.VersionMismatch, LayerMask.Base), token);
             await Task.Delay(Timeout.InfiniteTimeSpan, _time, token).ConfigureAwait(false);
             return;
@@ -341,10 +352,17 @@ public sealed class DeviceService : IAsyncDisposable
             slots.Add(await ReadAsync<SlotContents>(config, Protocol.GetExpression(i), Protocol.TryParseExpressionResponse, token).ConfigureAwait(false));
         }
 
-        // Append Into An Empty Slot
+        // Append Into An Empty Slot, After Confirming It's Still Empty: A Foreign Reply From The Web Config Tool Could
+        // Have Made A Full Slot Look Empty, And Appending There Would Corrupt The User's Expression
         var choice = Protocol.ChooseSlot(slots);
         if (choice.Kind == SlotChoiceKind.Empty)
         {
+            var confirm = await ReadAsync<SlotContents>(config, Protocol.GetExpression(choice.Slot), Protocol.TryParseExpressionResponse, token).ConfigureAwait(false);
+            if (confirm.ElementCount != 0)
+            {
+                throw new DeviceProtocolException("slot was not empty on re-read");
+            }
+
             await config.SendFeatureAsync(Protocol.AppendExpression(choice.Slot), token).ConfigureAwait(false);
             await config.SendFeatureAsync(Protocol.Resume(), token).ConfigureAwait(false);
         }

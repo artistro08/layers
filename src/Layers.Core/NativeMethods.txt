@@ -63,5 +63,7 @@ MonitorFromWindow
 GetMonitorInfo
 MONITORINFO
 GetClassName
-HidD_SetFeature
-HidD_GetFeature
+HidD_GetPreparsedData
+HidP_GetCaps
+HidD_FreePreparsedData
+HIDP_CAPS

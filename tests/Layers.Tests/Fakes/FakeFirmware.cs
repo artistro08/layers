@@ -14,6 +14,8 @@ internal sealed class FakeConfigChannel : IHidChannel
     public (byte Count, byte[] Bytes)[] Slots { get; } = Enumerable.Range(0, 8).Select(_ => ((byte)0, Array.Empty<byte>())).ToArray();
     public int ShortReplies { get; set; }
     public bool CorruptNextReply { get; set; }
+    public (byte Command, byte[] Reply)? ForeignReply { get; set; }
+    private byte _last_command;
     public Exception? SendFailure { get; set; }
     public int SendAttempts { get; private set; }
     public Action? OnSend { get; set; }
@@ -54,6 +56,7 @@ internal sealed class FakeConfigChannel : IHidChannel
             }
 
             _sent.Add(report.ToArray());
+            _last_command = report[2];
             switch (report[2])
             {
                 case Protocol.CmdGetConfig:
@@ -84,6 +87,13 @@ internal sealed class FakeConfigChannel : IHidChannel
     {
         lock (_gate)
         {
+            // One Reply Meant For Someone Else, Like The Web Config Tool, Served To The Next Read Of That Command
+            if (ForeignReply is { } foreign && foreign.Command == _last_command)
+            {
+                ForeignReply = null;
+                return Task.FromResult(foreign.Reply.ToArray());
+            }
+
             if (ShortReplies > 0)
             {
                 ShortReplies--;

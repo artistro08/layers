@@ -166,7 +166,16 @@ public sealed class WinRtHidDeviceSource : IHidDeviceSource
     public async Task<HidDevicePair> OpenAsync(string deviceId, CancellationToken cancellationToken)
     {
         // Open Config Shared, So The Web Config Tool And Layers Can Hold It At The Same Time
-        var config = Win32HidChannel.Open(deviceId);
+        // The WinRT Device ID Of A HID Collection Is Its Win32 Device Path
+        Win32HidChannel config;
+        try
+        {
+            config = new Win32HidChannel(File.OpenHandle(deviceId, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new DeviceProtocolException("config collection could not be opened", ex);
+        }
 
         try
         {
