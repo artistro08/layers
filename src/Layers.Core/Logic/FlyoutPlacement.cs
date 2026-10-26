@@ -44,9 +44,10 @@ public enum TaskbarEdge
 /// Where the shortcut sheet goes on the monitor that holds the tray icon.
 /// </summary>
 /// <remarks>
-/// Pure math, so it's testable. The flyout is always right-aligned in the work area with a margin. It sits above a
-/// bottom taskbar, below a top taskbar, and at the bottom of the work area when the taskbar is on a side. It never
-/// leaves the work area: a short or narrow work area shrinks it. Ported from MagicBuds.
+/// Pure math, so it's testable. The flyout sits in the work area's corner nearest the tray with a margin: above a
+/// bottom taskbar, below a top taskbar, and at the bottom against a side taskbar, all on the right except for a
+/// left taskbar, where it hugs the left. It never leaves the work area: a short or narrow work area shrinks it.
+/// Ported from MagicBuds.
 /// </remarks>
 public static class FlyoutPlacement
 {
@@ -108,7 +109,9 @@ public static class FlyoutPlacement
         var width  = Math.Min((int)Math.Round(WidthDip * scale), workArea.Width - (2 * margin));
         var height = Math.Min((int)Math.Round(heightDip * scale), workArea.Height - (2 * margin));
 
-        var left = workArea.Right - margin - width;
+        var left = edge == TaskbarEdge.Left
+            ? workArea.Left + margin
+            : workArea.Right - margin - width;
         var top  = edge == TaskbarEdge.Top
             ? workArea.Top + margin
             : workArea.Bottom - margin - height;

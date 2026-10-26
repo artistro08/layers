@@ -144,15 +144,6 @@
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
     </Style>
 
-    <!-- Shortcut Sheet Mouse And Media Keys: The Same 24 px Cap, With The Glyph A Little Larger Than The Text -->
-    <Style
-        x:Key="SheetIconKeyVisualStyle"
-        BasedOn="{StaticResource SheetKeyVisualStyle}"
-        TargetType="controls:KeyVisual">
-        <Setter Property="Padding" Value="4,0,4,0" />
-        <Setter Property="FontSize" Value="17" />
-    </Style>
-
     <!-- Key Chip: A Quiet Control Fill, A 1 px Divider Stroke, Radius 4. The Shortcut Sheet Rows And The Picker Use It -->
     <Style
         x:Key="KeyChipStyle"

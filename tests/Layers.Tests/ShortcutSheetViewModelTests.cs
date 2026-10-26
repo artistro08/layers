@@ -52,7 +52,6 @@ public sealed class ShortcutSheetViewModelTests
         var vm = new ShortcutSheetViewModel { Config = EmptyConfig(), State = new DeviceState(DeviceStatus.Connected, LayerMask.Base) };
 
         Assert.AreEqual("No shortcuts set up", vm.EmptyMessage);
-        Assert.IsFalse(vm.HasRows);
     }
 
     [TestMethod]
@@ -71,7 +70,6 @@ public sealed class ShortcutSheetViewModelTests
 
         Assert.IsTrue(vm.MarksActive);
         Assert.AreEqual(new LayerMask(0b10), vm.ActiveLayers);
-        Assert.IsTrue(vm.HasRows);
         Assert.IsFalse(vm.HasEmptyMessage);
         Assert.AreEqual("Connected", vm.StatusLabel);
         Assert.AreEqual(StatusTone.Success, vm.Tone);
@@ -86,7 +84,7 @@ public sealed class ShortcutSheetViewModelTests
 
         vm.State = new DeviceState(DeviceStatus.Connected, new LayerMask(0b10));
 
-        CollectionAssert.IsSubsetOf(new[] { "Sections", "EmptyMessage", "StatusLabel", "Tone", "ShowList", "HasRows" }, raised);
+        CollectionAssert.IsSubsetOf(new[] { "Sections", "EmptyMessage", "StatusLabel", "Tone", "ShowList" }, raised);
     }
 
     [TestMethod]
@@ -98,7 +96,7 @@ public sealed class ShortcutSheetViewModelTests
 
         vm.Config = SomeConfig();
 
-        CollectionAssert.IsSubsetOf(new[] { "Sections", "EmptyMessage", "ShowList", "HasRows" }, raised);
+        CollectionAssert.IsSubsetOf(new[] { "Sections", "EmptyMessage", "ShowList" }, raised);
     }
 
     [TestMethod]

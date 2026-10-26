@@ -168,6 +168,8 @@ public sealed class SettingsStoreTests
     [DataRow("https://remapper.org/config", true)]
     [DataRow("remapper.org/config", true)]
     [DataRow("http://localhost:8000", true)]
+    [DataRow("localhost:8080/config", true)]
+    [DataRow("192.168.1.5:8080", true)]
     [DataRow("ftp://x", false)]
     [DataRow("javascript:alert(1)", false)]
     [DataRow("  ", false)]

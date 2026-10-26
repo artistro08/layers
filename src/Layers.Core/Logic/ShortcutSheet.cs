@@ -4,7 +4,8 @@ namespace Layers.Core.Logic;
 /// What a mapping produces: keys, or a macro.
 /// </summary>
 /// <remarks>
-/// The view renders <see cref="KeysOutput"/> as chips and <see cref="MacroOutput"/> as a caption over step chips.
+/// The view renders <see cref="KeysOutput"/> as chips. A one-step <see cref="MacroOutput"/> shows as its keys behind
+/// a macro icon; a longer one shows as its steps, an arrow, then a macro chip.
 /// </remarks>
 public abstract record ShortcutOutput;
 

@@ -168,18 +168,6 @@ public sealed partial class KeyVisual : Control
                     PresenterContent = "Esc";
                     PresenterStyle   = Resource("DefaultKeyCharPresenterStyle");
                     break;
-                case "Left button":
-                    PresenterStyle = Resource("MouseLeftKeyCharPresenterStyle");
-                    break;
-                case "Right button":
-                    PresenterStyle = Resource("MouseRightKeyCharPresenterStyle");
-                    break;
-                case "Middle button":
-                    PresenterStyle = Resource("MouseMiddleKeyCharPresenterStyle");
-                    break;
-                case var media when MediaStyle(media) is { } mediaStyle:
-                    PresenterStyle = Resource(mediaStyle);
-                    break;
                 default:
                     if (GlyphFor(key) is { } glyph)
                     {
@@ -233,16 +221,6 @@ public sealed partial class KeyVisual : Control
         }
     }
 
-    /// <summary>
-    /// Tells whether a key draws as a bare glyph with no cap behind it.
-    /// </summary>
-    /// <remarks>
-    /// Layers: mouse buttons and media keys are icons, not keys you press on a keyboard, so they skip the cap.
-    /// </remarks>
-    /// <param name="name">The key's name as the web config tool gives it.</param>
-    /// <returns><see langword="true"/> for mouse buttons and media keys.</returns>
-    public static bool IsBare(string name) => name is "Left button" or "Right button" or "Middle button" || MediaStyle(name) is not null;
-
     // Layers: Glyphs For The Web Tool's Names (Segoe Fluent Icons): Shift, Arrows, Enter, Backspace
     private static string? GlyphFor(string name) => name switch
     {
@@ -254,19 +232,6 @@ public sealed partial class KeyVisual : Control
         "Enter" or "Keypad Enter"     => "",
         "Backspace"                   => "",
         _                             => null,
-    };
-
-    // Layers: Media Keys Draw Solid Icons From Styles/KeyCharPresenter.xaml
-    private static string? MediaStyle(string name) => name switch
-    {
-        "Volume up"      => "VolumeUpKeyCharPresenterStyle",
-        "Volume down"    => "VolumeDownKeyCharPresenterStyle",
-        "Mute"           => "MuteKeyCharPresenterStyle",
-        "Play/pause"     => "PlayPauseKeyCharPresenterStyle",
-        "Stop"           => "StopKeyCharPresenterStyle",
-        "Next track"     => "NextTrackKeyCharPresenterStyle",
-        "Previous track" => "PreviousTrackKeyCharPresenterStyle",
-        _                => null,
     };
 
     private void SetGlyph(string glyph)

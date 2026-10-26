@@ -63,7 +63,6 @@ public sealed class ShortcutFlyoutWindowTests
         Assert.IsTrue(presenter.IsAlwaysOnTop);
         Assert.IsFalse(presenter.HasBorder);
         Assert.IsFalse(presenter.HasTitleBar);
-        Assert.AreEqual(480, ShortcutFlyoutWindow.PanelWidthDip);
         window.Shutdown();
     });
 

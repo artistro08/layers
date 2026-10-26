@@ -134,20 +134,6 @@ public static partial class UsageNames
     /// <returns>The hex text.</returns>
     public static string Hex(uint usage) => string.Create(CultureInfo.InvariantCulture, $"0x{usage:X8}");
 
-    /// <summary>
-    /// Tells whether a usage fires a macro.
-    /// </summary>
-    /// <param name="usage">The output usage.</param>
-    /// <returns><see langword="true"/> on the macro page.</returns>
-    public static bool IsMacro(uint usage) => (usage & PageMask) == Protocol.MacroUsagePage;
-
-    /// <summary>
-    /// Tells whether a usage switches layers.
-    /// </summary>
-    /// <param name="usage">The output usage.</param>
-    /// <returns><see langword="true"/> on the layer page.</returns>
-    public static bool IsLayer(uint usage) => (usage & PageMask) == Protocol.LayerUsagePage;
-
     // MIDI Usages Encode The Status Nibble And Channel In Byte 1 And The Note Or Controller In Byte 0
     private static string Midi(uint usage)
     {

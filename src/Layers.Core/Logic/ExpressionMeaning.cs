@@ -123,13 +123,6 @@ public static class ExpressionMeaning
             .ToList();
     }
 
-    /// <summary>
-    /// Tells whether a usage is an expression.
-    /// </summary>
-    /// <param name="usage">The usage.</param>
-    /// <returns><see langword="true"/> on the expression page.</returns>
-    public static bool IsExpression(uint usage) => (usage & PageMask) == ExpressionPage;
-
     private static void AddText(List<MeaningPart> parts, System.Text.StringBuilder plain)
     {
         var text = plain.ToString().Trim();

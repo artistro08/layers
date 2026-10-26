@@ -126,16 +126,13 @@ public sealed partial class ShortcutFlyoutWindow : Window
     /// <summary>Gets a value indicating whether the flyout is open (or still sliding in).</summary>
     public bool IsOpen => _isOpen;
 
-    /// <summary>Gets the panel's width in device-independent pixels.</summary>
-    public static int PanelWidthDip => FlyoutPlacement.WidthDip;
-
     internal ShortcutSheetView View { get; }
 
     /// <summary>
     /// Opens the flyout if it isn't already.
     /// </summary>
     /// <remarks>
-    /// The hotkey and the menu item use this.
+    /// The tray menu's Shortcuts item uses this.
     /// </remarks>
     /// <param name="iconRect">The tray icon's bounds, or <see langword="null"/> to use the cursor's monitor.</param>
     public void Open(RectInt32? iconRect)
@@ -150,7 +147,7 @@ public sealed partial class ShortcutFlyoutWindow : Window
     /// Opens the flyout, or closes it when open.
     /// </summary>
     /// <remarks>
-    /// The tray left-click uses this. A toggle right after a hide is the click that caused the hide, and is ignored.
+    /// The tray left-click and the hotkey use this. A toggle right after a hide is the click that caused the hide, and is ignored.
     /// </remarks>
     /// <param name="iconRect">The tray icon's bounds, or <see langword="null"/> to use the cursor's monitor.</param>
     public void Toggle(RectInt32? iconRect)
@@ -173,7 +170,8 @@ public sealed partial class ShortcutFlyoutWindow : Window
     /// Slides the panel back behind the taskbar, then hides the window.
     /// </summary>
     /// <remarks>
-    /// Focus goes back to the taskbar first, so keys don't land in the closing window.
+    /// Focus goes back first, so keys don't land in the closing window: to the window that had it before the flyout
+    /// opened, or to the taskbar if that window is gone.
     /// </remarks>
     public void HideFlyout()
     {
@@ -205,6 +203,7 @@ public sealed partial class ShortcutFlyoutWindow : Window
     public void Shutdown()
     {
         _shuttingDown = true;
+        _isOpen       = false;
         _slide        = null;
         Close();
     }

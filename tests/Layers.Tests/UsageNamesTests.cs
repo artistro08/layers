@@ -48,13 +48,4 @@ public sealed class UsageNamesTests
 
     [TestMethod]
     public void Hex_IsUppercaseEightDigits() => Assert.AreEqual("0x0007001E", UsageNames.Hex(0x0007001E));
-
-    [TestMethod]
-    public void Pages_AreRecognized()
-    {
-        Assert.IsTrue(UsageNames.IsMacro(0xFFF20005));
-        Assert.IsTrue(UsageNames.IsLayer(0xFFF10001));
-        Assert.IsFalse(UsageNames.IsMacro(0x00070004));
-        Assert.IsFalse(UsageNames.IsLayer(0xFFF20005));
-    }
 }

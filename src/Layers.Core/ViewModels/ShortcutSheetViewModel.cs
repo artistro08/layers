@@ -116,9 +116,6 @@ public sealed class ShortcutSheetViewModel : ObservableObject
     /// <summary>Gets a value indicating whether the list area shows rather than a placeholder or nothing.</summary>
     public bool ShowList => IsReadable && _config is not null;
 
-    /// <summary>Gets a value indicating whether the list has at least one row.</summary>
-    public bool HasRows => _sections.Count > 0;
-
     /// <summary>Gets a value indicating whether the header's "Couldn't refresh" note shows: a failed refresh while a list exists.</summary>
     public bool ShowRefreshNote => _refreshFailed && ShowList;
 
@@ -157,7 +154,6 @@ public sealed class ShortcutSheetViewModel : ObservableObject
         OnPropertyChanged(nameof(ActiveLayers));
         OnPropertyChanged(nameof(ShowList));
         OnPropertyChanged(nameof(ShowRefreshNote));
-        OnPropertyChanged(nameof(HasRows));
         OnPropertyChanged(nameof(EmptyMessage));
         OnPropertyChanged(nameof(HasEmptyMessage));
     }

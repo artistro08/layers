@@ -33,6 +33,7 @@ public sealed partial class ShortcutSheetView : UserControl
 
     // Each Section's Active Pill By Layer, And Each Key Block With Its Searchable Text
     private readonly Dictionary<int, Border> _pills = [];
+    private readonly Dictionary<Border, (Storyboard Story, bool Show)> _fades = [];
     private readonly List<(FrameworkElement Section, List<(FrameworkElement Row, string Text)> Rows)> _built = [];
 
     /// <summary>
@@ -78,8 +79,6 @@ public sealed partial class ShortcutSheetView : UserControl
 
     internal void FocusList() => SearchBox.Focus(FocusState.Programmatic);
 
-    internal void RefreshBindings() => Bindings.Update();
-
     // =========================================================================
     // SECTIONS
     // =========================================================================
@@ -104,6 +103,7 @@ public sealed partial class ShortcutSheetView : UserControl
     {
         SectionsPanel.Children.Clear();
         _pills.Clear();
+        _fades.Clear();
         _built.Clear();
         foreach (var section in Model.Sections)
         {
@@ -178,15 +178,28 @@ public sealed partial class ShortcutSheetView : UserControl
         Child               = ChipText("Active", Resource<Brush>("ActiveChipForegroundBrush")),
     };
 
-    // Fades A Badge In Or Out; It Leaves The Layout Only Once It Has Faded, So Nothing Moves Mid-Fade
-    private static void Fade(Border pill, bool show)
+    // Fades A Badge In Or Out; It Leaves The Layout Only Once It Has Faded, So Nothing Moves Mid-Fade. A Quick
+    // Toggle Turns The Running Fade Around From Where It Is, So A Stale One Can Never Finish Last.
+    private void Fade(Border pill, bool show)
     {
-        if (show == (pill.Visibility == Visibility.Visible && pill.Opacity > 0.5))
+        if (_fades.TryGetValue(pill, out var running))
+        {
+            if (running.Show == show)
+            {
+                return;
+            }
+
+            var opacity = pill.Opacity;
+            running.Story.Stop();
+            pill.Opacity = opacity;
+            _fades.Remove(pill);
+        }
+        else if (show == (pill.Visibility == Visibility.Visible))
         {
             return;
         }
 
-        if (show)
+        if (show && pill.Visibility == Visibility.Collapsed)
         {
             pill.Opacity    = 0;
             pill.Visibility = Visibility.Visible;
@@ -205,12 +218,19 @@ public sealed partial class ShortcutSheetView : UserControl
         story.Children.Add(fade);
         story.Completed += (_, _) =>
         {
+            if (!_fades.TryGetValue(pill, out var current) || current.Story != story)
+            {
+                return;
+            }
+
+            _fades.Remove(pill);
             pill.Opacity = show ? 1 : 0;
             if (!show)
             {
                 pill.Visibility = Visibility.Collapsed;
             }
         };
+        _fades[pill] = (story, show);
         story.Begin();
     }
 

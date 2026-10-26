@@ -39,12 +39,21 @@ public sealed class FlyoutPlacementTests
     }
 
     [TestMethod]
-    public void Calculate_SideTaskbarSitsAtTheBottom()
+    public void Calculate_LeftTaskbarHugsTheLeft()
     {
         var rect = FlyoutPlacement.Calculate(Monitor, new PixelRect(64, 0, 2560, 1440), 1.0, 500);
 
         Assert.AreEqual(1440 - 12, rect.Bottom);
-        Assert.AreEqual(2560 - 12, rect.Right);
+        Assert.AreEqual(64 + 12, rect.Left);
+    }
+
+    [TestMethod]
+    public void Calculate_RightTaskbarHugsTheRight()
+    {
+        var rect = FlyoutPlacement.Calculate(Monitor, new PixelRect(0, 0, 2496, 1440), 1.0, 500);
+
+        Assert.AreEqual(1440 - 12, rect.Bottom);
+        Assert.AreEqual(2496 - 12, rect.Right);
     }
 
     [TestMethod]

@@ -199,8 +199,8 @@ public sealed class SettingsStore(string keyPath = SettingsStore.DefaultKeyPath)
     /// Reads a web address the way a person types it.
     /// </summary>
     /// <remarks>
-    /// A missing scheme means https. Only http and https are accepted, so the edit button can't launch a file or a
-    /// script.
+    /// A missing scheme means https, including a bare host and port like <c>localhost:8080</c>. Only http and https
+    /// are accepted, so the edit button can't launch a file or a script.
     /// </remarks>
     /// <param name="text">The typed address.</param>
     /// <param name="url">The address when this returns <see langword="true"/>.</param>
@@ -214,7 +214,7 @@ public sealed class SettingsStore(string keyPath = SettingsStore.DefaultKeyPath)
         }
 
         var trimmed = text.Trim();
-        if (!trimmed.Contains("://", StringComparison.Ordinal) && !trimmed.Contains(':', StringComparison.Ordinal))
+        if (!trimmed.Contains("://", StringComparison.Ordinal))
         {
             trimmed = $"https://{trimmed}";
         }

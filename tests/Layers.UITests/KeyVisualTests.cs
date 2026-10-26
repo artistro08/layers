@@ -31,21 +31,6 @@ public sealed class KeyVisualTests
     });
 
     [TestMethod]
-    [DataRow("Left button")]
-    [DataRow("Right button")]
-    [DataRow("Middle button")]
-    public Task KeyVisual_MouseButtonsDrawAMouse(string name) => UiHost.RunAsync(async () =>
-    {
-        var visual = new KeyVisual { Content = name };
-        var host   = UiTree.ShowInWindow(visual);
-        await UiHost.Settle();
-
-        Assert.IsNotNull(visual.FindDescendant<PathIcon>(), "a mouse icon, not text");
-        Assert.IsNull(visual.FindDescendant<TextBlock>(t => t.Text == name));
-        host.Close();
-    });
-
-    [TestMethod]
     public Task KeyVisual_ShiftIsGlyphOnlyWhenAsked() => UiHost.RunAsync(async () =>
     {
         var text  = new KeyVisual { Content = 16 };

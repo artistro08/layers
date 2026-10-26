@@ -34,7 +34,8 @@ namespace Layers.Core.Services;
 /// every open, so that heals itself.
 /// </para>
 /// <para>
-/// Any session error shows Disconnected and retries after 2 seconds while the device is present. Unplugging cancels
+/// Any session error shows Disconnected and retries after 2 seconds while the device is present. A failed mapping
+/// read is the exception: it's logged and dropped, the session carries on, and the sheet says it couldn't refresh. Unplugging cancels
 /// the session. <see cref="StateChanged"/> and <see cref="ConfigChanged"/> are raised on background threads, in
 /// order, under an internal lock: handlers must be quick and must marshal to the UI thread themselves.
 /// </para>

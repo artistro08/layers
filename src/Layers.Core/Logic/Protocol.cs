@@ -203,9 +203,6 @@ public static class Protocol
     /// <summary>The most usages a macro read accepts, for the same reason.</summary>
     public const int MaxMacroUsages = 2048;
 
-    /// <summary>Usage page of layer targets: 0xFFF1000N switches to layer N.</summary>
-    public const uint LayerUsagePage = 0xFFF1_0000;
-
     /// <summary>Usage page of macro targets: 0xFFF2000N fires macro slot N-1.</summary>
     public const uint MacroUsagePage = 0xFFF2_0000;
 
@@ -391,7 +388,10 @@ public static class Protocol
     /// </remarks>
     /// <param name="packet">The reply.</param>
     /// <param name="summary">The parsed fields.</param>
-    /// <returns><see langword="true"/> when the reply's length and CRC are valid.</returns>
+    /// <returns>
+    /// <see langword="true"/> when the CRC is valid, the version is <see cref="ConfigVersion"/>, and the mapping count
+    /// is at most <see cref="MaxMappings"/>; a stray reply fails, so the caller reads again.
+    /// </returns>
     public static bool TryParseConfigSummary(ReadOnlySpan<byte> packet, out ConfigSummary summary)
     {
         summary = new ConfigSummary(0, 0, 0);
