@@ -50,6 +50,17 @@
 
                 <MenuFlyoutSeparator />
 
+                <!-- Shortcuts -->
+                <MenuFlyoutItem
+                    x:Name="ShortcutsItem"
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
+                    Text="Shortcuts"
+                    Click="Shortcuts_Click">
+                    <MenuFlyoutItem.Icon>
+                        <FontIcon Glyph="&#xE765;" />
+                    </MenuFlyoutItem.Icon>
+                </MenuFlyoutItem>
+
                 <!-- Settings -->
                 <MenuFlyoutItem
                     x:Name="SettingsItem"

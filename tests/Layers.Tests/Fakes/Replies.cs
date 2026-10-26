@@ -7,11 +7,39 @@ namespace Layers.Tests.Fakes;
 /// Builds device replies the way HID Remapper firmware does.
 internal static class Replies
 {
-    public static byte[] Config(byte version)
+    public static byte[] Config(byte version, ushort mappingCount = 0, byte descriptorNumber = 0)
     {
         var packet = new byte[Protocol.PacketLength];
         packet[0]  = Protocol.ReportIdConfig;
         packet[1]  = version;
+        BinaryPrimitives.WriteUInt16LittleEndian(packet.AsSpan(8), mappingCount);
+        packet[24] = descriptorNumber;
+        return Sign(packet);
+    }
+
+    // Reply Payload: Target, Source, Scaling (0), Layer Mask, Flags, Hub Ports (0)
+    public static byte[] Mapping(uint target, uint source, byte layerMask, byte flags)
+    {
+        var packet = new byte[Protocol.PacketLength];
+        packet[0]  = Protocol.ReportIdConfig;
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(1), target);
+        BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(5), source);
+        packet[13] = layerMask;
+        packet[14] = flags;
+        return Sign(packet);
+    }
+
+    // Reply Payload: Count, Then Up To Six Usages
+    public static byte[] MacroChunk(uint[] usages)
+    {
+        var packet = new byte[Protocol.PacketLength];
+        packet[0]  = Protocol.ReportIdConfig;
+        packet[1]  = (byte)usages.Length;
+        for (var i = 0; i < usages.Length; i++)
+        {
+            BinaryPrimitives.WriteUInt32LittleEndian(packet.AsSpan(2 + i * 4), usages[i]);
+        }
+
         return Sign(packet);
     }
 

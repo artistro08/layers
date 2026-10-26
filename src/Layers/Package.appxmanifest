@@ -10,7 +10,7 @@
     <Identity
         Name="artistro08.Layers-HID"
         Publisher="CN=BF59F607-536B-4252-888F-7B3ED9D56F96"
-        Version="2.0.2.0" />
+        Version="2.1.0.0" />
 
     <!-- Store Properties -->
     <Properties>

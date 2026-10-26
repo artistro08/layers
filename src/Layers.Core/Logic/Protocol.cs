@@ -68,6 +68,62 @@ public enum SlotChoiceKind
 public readonly record struct SlotChoice(SlotChoiceKind Kind, byte Slot);
 
 /// <summary>
+/// One key mapping as the firmware reports it.
+/// </summary>
+/// <remarks>
+/// Scaling and hub ports are read off the wire and dropped: the shortcut sheet shows what a key does, not by how much.
+/// </remarks>
+/// <param name="Source">The input usage (usage page in the high 16 bits).</param>
+/// <param name="Target">The output usage. Layer targets live on page 0xFFF1, macro targets on page 0xFFF2.</param>
+/// <param name="LayerMask">Bit N set means the mapping is active on layer N.</param>
+/// <param name="Sticky">The mapping's sticky flag.</param>
+/// <param name="Tap">The mapping's tap flag.</param>
+/// <param name="Hold">The mapping's hold flag.</param>
+public sealed record Mapping(uint Source, uint Target, byte LayerMask, bool Sticky, bool Tap, bool Hold)
+{
+    /// <summary>
+    /// Gets the 0-based macro slot this mapping fires, or <see langword="null"/> when the target is not a macro.
+    /// </summary>
+    /// <remarks>
+    /// Macro usage 0xFFF20001 is slot 0, which the web tool shows as "Macro 1".
+    /// </remarks>
+    public int? MacroIndex => (Target & 0xFFFF_0000) == Protocol.MacroUsagePage ? (int)(Target & 0xFFFF) - 1 : null;
+}
+
+/// <summary>
+/// The fields of a GET_CONFIG reply the app reads.
+/// </summary>
+/// <remarks>
+/// The reply carries more (timeouts, flags, usage counts); only these three drive behavior.
+/// </remarks>
+/// <param name="Version">The config version.</param>
+/// <param name="MappingCount">How many mappings GET_MAPPING can index.</param>
+/// <param name="DescriptorNumber">Which output descriptor the device presents, selecting the output name table.</param>
+public sealed record ConfigSummary(byte Version, ushort MappingCount, byte DescriptorNumber);
+
+/// <summary>
+/// One GET_MACRO reply: up to six usages of a macro.
+/// </summary>
+/// <remarks>
+/// A count below six ends the macro. A zero usage separates steps.
+/// </remarks>
+/// <param name="Count">How many of the six usage slots are filled, 0 through 6.</param>
+/// <param name="Usages">The filled usages, in order.</param>
+public sealed record MacroChunk(byte Count, uint[] Usages);
+
+/// <summary>
+/// The mappings and macros read from the device.
+/// </summary>
+/// <remarks>
+/// <see cref="Macros"/> always has 32 entries. A macro is a list of steps, and a step is the usages pressed together.
+/// Slots no mapping points at are left empty rather than read.
+/// </remarks>
+/// <param name="DescriptorNumber">The device's output descriptor number, for output names.</param>
+/// <param name="Mappings">The mappings in device order.</param>
+/// <param name="Macros">The 32 macro slots.</param>
+public sealed record DeviceConfig(byte DescriptorNumber, IReadOnlyList<Mapping> Mappings, IReadOnlyList<IReadOnlyList<IReadOnlyList<uint>>> Macros);
+
+/// <summary>
 /// HID Remapper config wire format for config version 18.
 /// </summary>
 /// <remarks>
@@ -128,6 +184,27 @@ public static class Protocol
 
     /// <summary>SET_MONITOR_ENABLED command.</summary>
     public const byte CmdSetMonitorEnabled = 22;
+
+    /// <summary>GET_MAPPING command. Payload is the mapping index as a u32.</summary>
+    public const byte CmdGetMapping = 6;
+
+    /// <summary>GET_MACRO command. Payload is the macro slot then the usage offset, both u32.</summary>
+    public const byte CmdGetMacro = 17;
+
+    /// <summary>Number of macro slots on the device.</summary>
+    public const int MacroSlots = 32;
+
+    /// <summary>Usages per GET_MACRO reply. A shorter reply ends the macro.</summary>
+    public const int MacroItemsPerPacket = 6;
+
+    /// <summary>The most mappings a config read accepts. Replies carry no tag, so a stray reply must not drive thousands of reads.</summary>
+    public const int MaxMappings = 2048;
+
+    /// <summary>The most usages a macro read accepts, for the same reason.</summary>
+    public const int MaxMacroUsages = 2048;
+
+    /// <summary>Usage page of macro targets: 0xFFF2000N fires macro slot N-1.</summary>
+    public const uint MacroUsagePage = 0xFFF2_0000;
 
     internal const byte ExpressionElementCount = 3;
 
@@ -241,6 +318,30 @@ public static class Protocol
     /// <returns>The packet.</returns>
     public static byte[] SetMonitorEnabled(bool enabled) => BuildPacket(CmdSetMonitorEnabled, [enabled ? (byte)1 : (byte)0]);
 
+    /// <summary>Builds GET_MAPPING for one mapping.</summary>
+    /// <remarks>Payload is the index as a u32.</remarks>
+    /// <param name="index">The mapping index, below the count GET_CONFIG reports.</param>
+    /// <returns>The packet.</returns>
+    public static byte[] GetMapping(uint index)
+    {
+        Span<byte> payload = stackalloc byte[4];
+        BinaryPrimitives.WriteUInt32LittleEndian(payload, index);
+        return BuildPacket(CmdGetMapping, payload);
+    }
+
+    /// <summary>Builds GET_MACRO for six usages of one macro.</summary>
+    /// <remarks>Payload is the macro slot then the usage offset, both u32. Read at offsets 0, 6, 12... until a short reply.</remarks>
+    /// <param name="macro">The macro slot, 0 through 31.</param>
+    /// <param name="offset">The usage offset to start at.</param>
+    /// <returns>The packet.</returns>
+    public static byte[] GetMacro(uint macro, uint offset)
+    {
+        Span<byte> payload = stackalloc byte[8];
+        BinaryPrimitives.WriteUInt32LittleEndian(payload, macro);
+        BinaryPrimitives.WriteUInt32LittleEndian(payload[4..], offset);
+        return BuildPacket(CmdGetMacro, payload);
+    }
+
     // =========================================================================
     // PARSING
     // =========================================================================
@@ -279,6 +380,81 @@ public static class Protocol
         return true;
     }
 
+    /// <summary>Reads the version, mapping count, and descriptor number from a GET_CONFIG reply.</summary>
+    /// <remarks>
+    /// Reply payload, little-endian: u8 version, u8 flags, u8 unmapped passthrough mask, u32 partial scroll timeout,
+    /// u16 mapping count, u32 our usage count, u32 their usage count, u8 interval override, u32 tap-hold threshold,
+    /// u8 GPIO debounce, u8 our descriptor number. The payload starts at byte 1.
+    /// </remarks>
+    /// <param name="packet">The reply.</param>
+    /// <param name="summary">The parsed fields.</param>
+    /// <returns>
+    /// <see langword="true"/> when the CRC is valid, the version is <see cref="ConfigVersion"/>, and the mapping count
+    /// is at most <see cref="MaxMappings"/>; a stray reply fails, so the caller reads again.
+    /// </returns>
+    public static bool TryParseConfigSummary(ReadOnlySpan<byte> packet, out ConfigSummary summary)
+    {
+        summary = new ConfigSummary(0, 0, 0);
+        if (!VerifyCrc(packet))
+        {
+            return false;
+        }
+
+        // A Reply To Someone Else's Command Parses Too: The Version And A Sane Count Keep A Stray One From Driving Reads
+        summary = new ConfigSummary(packet[1], BinaryPrimitives.ReadUInt16LittleEndian(packet[8..]), packet[24]);
+        return summary.Version == ConfigVersion && summary.MappingCount <= MaxMappings;
+    }
+
+    /// <summary>Reads one mapping from a GET_MAPPING reply.</summary>
+    /// <remarks>
+    /// Reply payload, little-endian: u32 target, u32 source, i32 scaling, u8 layer mask, u8 flags, u8 hub ports.
+    /// Flags: bit 0 sticky, bit 1 tap, bit 2 hold.
+    /// </remarks>
+    /// <param name="packet">The reply.</param>
+    /// <param name="mapping">The mapping.</param>
+    /// <returns><see langword="true"/> when the reply's length and CRC are valid.</returns>
+    public static bool TryParseMapping(ReadOnlySpan<byte> packet, out Mapping mapping)
+    {
+        mapping = new Mapping(0, 0, 0, false, false, false);
+        if (!VerifyCrc(packet))
+        {
+            return false;
+        }
+
+        var flags = packet[14];
+        mapping   = new Mapping(
+            BinaryPrimitives.ReadUInt32LittleEndian(packet[5..]),
+            BinaryPrimitives.ReadUInt32LittleEndian(packet[1..]),
+            packet[13],
+            (flags & 0b001) != 0,
+            (flags & 0b010) != 0,
+            (flags & 0b100) != 0);
+        return true;
+    }
+
+    /// <summary>Reads one chunk of a macro from a GET_MACRO reply.</summary>
+    /// <remarks>Reply payload: u8 count, then six u32 usages of which the first count are valid.</remarks>
+    /// <param name="packet">The reply.</param>
+    /// <param name="chunk">The chunk.</param>
+    /// <returns><see langword="true"/> when the reply's length and CRC are valid and the count is at most six.</returns>
+    public static bool TryParseMacroChunk(ReadOnlySpan<byte> packet, out MacroChunk chunk)
+    {
+        chunk = new MacroChunk(0, []);
+        if (!VerifyCrc(packet) || packet[1] > MacroItemsPerPacket)
+        {
+            return false;
+        }
+
+        var usages = new uint[packet[1]];
+        for (var i = 0; i < usages.Length; i++)
+        {
+            usages[i] = BinaryPrimitives.ReadUInt32LittleEndian(packet[(2 + i * 4)..]);
+        }
+
+        chunk = new MacroChunk(packet[1], usages);
+        return true;
+    }
+
     /// <summary>Extracts the layer mask from a monitor report, if it carries our sentinel.</summary>
     /// <remarks>
     /// The firmware emits an item only when a value changes, so every sentinel item is a real layer switch.
@@ -311,6 +487,47 @@ public static class Protocol
         }
 
         return false;
+    }
+
+    // =========================================================================
+    // MACROS
+    // =========================================================================
+
+    /// <summary>Joins GET_MACRO chunks into steps.</summary>
+    /// <remarks>
+    /// A zero usage ends the current step. A trailing separator leaves no empty step behind, and an empty macro
+    /// gives an empty list.
+    /// </remarks>
+    /// <param name="chunks">The chunks in offset order.</param>
+    /// <returns>The steps, each the usages pressed together.</returns>
+    public static IReadOnlyList<IReadOnlyList<uint>> AssembleMacro(IEnumerable<MacroChunk> chunks)
+    {
+        ArgumentNullException.ThrowIfNull(chunks);
+
+        var steps = new List<IReadOnlyList<uint>>();
+        var step  = new List<uint>();
+        foreach (var usage in chunks.SelectMany(chunk => chunk.Usages))
+        {
+            if (usage != 0)
+            {
+                step.Add(usage);
+                continue;
+            }
+
+            // Separator: Close The Step
+            if (step.Count > 0)
+            {
+                steps.Add(step);
+                step = [];
+            }
+        }
+
+        if (step.Count > 0)
+        {
+            steps.Add(step);
+        }
+
+        return steps;
     }
 
     // =========================================================================

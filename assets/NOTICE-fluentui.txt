@@ -1,7 +1,9 @@
 The layers glyph path data in src/Layers.Core/Logic/PathData.cs is
 derived from ic_fluent_layer_24_filled in microsoft/fluentui-system-icons.
 It is used for the tray icon, the tray menu, the HUD and the Settings
-window.
+window. The scroll icon in src/Layers.UI/SheetIcons.cs is
+ic_fluent_phone_vertical_scroll_24_filled from the same set, used by the
+shortcut sheet.
 
 MIT License
 

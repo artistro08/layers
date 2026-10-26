@@ -74,5 +74,6 @@
     <!-- Third-Party Notice In The MSIX Only (the MSI ships it through Package.wxs, so the publish folder must not) -->
     <ItemGroup Condition="'$(WindowsPackageType)' == 'MSIX'">
         <Content Include="..\..\assets\NOTICE-fluentui.txt" Link="NOTICE-fluentui.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+        <Content Include="..\..\assets\NOTICE-powertoys.txt" Link="NOTICE-powertoys.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     </ItemGroup>
 </Project>

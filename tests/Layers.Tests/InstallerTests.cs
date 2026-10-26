@@ -90,7 +90,10 @@ public sealed class InstallerTests
     [TestMethod]
     public void ShipsTheNoticeOnce()
     {
-        Assert.AreEqual(1, Rows("SELECT `FileName` FROM `File`", 1).Count(f => f[0].EndsWith("NOTICE-fluentui.txt", StringComparison.OrdinalIgnoreCase)));
+        var files = Rows("SELECT `FileName` FROM `File`", 1);
+
+        Assert.AreEqual(1, files.Count(f => f[0].EndsWith("NOTICE-fluentui.txt", StringComparison.OrdinalIgnoreCase)));
+        Assert.AreEqual(1, files.Count(f => f[0].EndsWith("NOTICE-powertoys.txt", StringComparison.OrdinalIgnoreCase)));
     }
 
     [TestMethod]

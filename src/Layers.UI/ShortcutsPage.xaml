@@ -1,0 +1,160 @@
+<Page
+    x:Class="Layers.UI.ShortcutsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Layers.UI.Controls"
+    NavigationCacheMode="Required">
+
+    <!-- Content, 24 DIPs Below The Title Bar -->
+    <ScrollViewer x:Name="Scroller">
+        <StackPanel
+            Padding="24"
+            Spacing="16">
+
+            <!-- Shortcuts Section -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="Shortcuts" />
+                <TextBlock
+                    Margin="0,0,0,8"
+                    Text="The shortcut sheet lists every shortcut on your HID Remapper by layer. Open it from the tray icon, or from anywhere with this key combination."
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+
+                <!-- Card: The Setting On The Left, The Picker On The Right -->
+                <Border
+                    Padding="16,12"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource ControlCornerRadius}">
+                    <Grid ColumnSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel
+                            Grid.Column="0"
+                            VerticalAlignment="Center"
+                            Spacing="2">
+                            <TextBlock Text="Open the shortcut sheet" />
+                            <TextBlock
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="Show every shortcut on the connected HID Remapper."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <controls:ShortcutControl
+                            x:Name="Picker"
+                            x:FieldModifier="internal"
+                            Grid.Column="1"
+                            VerticalAlignment="Center"
+                            ButtonName="Open the shortcut sheet"
+                            HotkeySettingsChanged="Picker_HotkeySettingsChanged"
+                            DialogOpening="Picker_DialogOpening"
+                            DialogClosed="Picker_DialogClosed" />
+                    </Grid>
+                </Border>
+                <!-- /Card -->
+
+                <!-- Taken, Or Restored: Said Under The Card -->
+                <InfoBar
+                    x:Name="Note"
+                    x:FieldModifier="internal"
+                    IsClosable="False"
+                    Severity="Warning"
+                    IsOpen="False"
+                    Visibility="Collapsed" />
+            </StackPanel>
+
+            <!-- Divider -->
+            <Rectangle
+                Height="1"
+                Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <!-- Web Config Tool Section -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="Web config tool" />
+                <Border
+                    Padding="16,12"
+                    Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{StaticResource ControlCornerRadius}">
+                    <StackPanel Spacing="8">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="Address" />
+                            <TextBlock
+                                Style="{StaticResource CaptionTextBlockStyle}"
+                                Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                Text="The pencil in the shortcut sheet opens this page to edit your shortcuts."
+                                TextWrapping="Wrap" />
+                        </StackPanel>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox
+                                x:Name="EditorUrlBox"
+                                x:FieldModifier="internal"
+                                Grid.Column="0"
+                                InputScope="Url"
+                                TextChanged="EditorUrlBox_TextChanged"
+                                AutomationProperties.Name="Web config tool address" />
+                            <Button
+                                x:Name="EditorUrlReset"
+                                x:FieldModifier="internal"
+                                Grid.Column="1"
+                                Content="Reset"
+                                Click="EditorUrlReset_Click"
+                                AutomationProperties.Name="Reset the address" />
+                        </Grid>
+                        <TextBlock
+                            x:Name="EditorUrlError"
+                            x:FieldModifier="internal"
+                            Style="{StaticResource CaptionTextBlockStyle}"
+                            Foreground="{ThemeResource SystemFillColorCriticalBrush}"
+                            Text="Enter a web address, like remapper.org/config. The last good one is kept until then."
+                            TextWrapping="Wrap"
+                            Visibility="Collapsed" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+            <!-- /Web Config Tool Section -->
+
+            <!-- Divider -->
+            <Rectangle
+                Height="1"
+                Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+
+            <!-- Expressions Section -->
+            <StackPanel Spacing="8">
+                <TextBlock
+                    Style="{StaticResource BodyStrongTextBlockStyle}"
+                    Text="Expressions" />
+                <TextBlock
+                    Margin="0,0,0,8"
+                    Text="Say what each expression does, and the shortcut sheet shows it in place of the expression's number. Put a key in braces, or pick one with the key button, and it shows as a key."
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+                <TextBlock
+                    x:Name="ExpressionsNote"
+                    x:FieldModifier="internal"
+                    Text="Connect your HID Remapper to see its expressions."
+                    Style="{StaticResource CaptionTextBlockStyle}"
+                    Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                    TextWrapping="Wrap" />
+
+                <!-- One Card Per Expression, Built In Code -->
+                <StackPanel
+                    x:Name="ExpressionsPanel"
+                    Spacing="8" />
+            </StackPanel>
+            <!-- /Expressions Section -->
+        </StackPanel>
+    </ScrollViewer>
+</Page>

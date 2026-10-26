@@ -12,6 +12,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
     private FakeTimeProvider _time = null!;
     private DeviceService _service = null!;
     private List<DeviceState> _events = null!;
+    private List<DeviceConfig> _configs = null!;
 
     [TestInitialize]
     public void Setup()
@@ -20,7 +21,9 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         _time    = new FakeTimeProvider();
         _service = new DeviceService(_source, _time);
         _events  = [];
-        _service.StateChanged += (_, state) => { lock (_events) { _events.Add(state); } };
+        _configs = [];
+        _service.StateChanged  += (_, state) => { lock (_events) { _events.Add(state); } };
+        _service.ConfigChanged += (_, config) => { lock (_configs) { _configs.Add(config); } };
         _service.Start();
     }
 
@@ -50,9 +53,11 @@ public sealed class DeviceServiceTests : IAsyncDisposable
     public async Task Connect_SendsSequenceInOrder()
     {
         await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
 
-        // Eight Slot Reads, A Confirming Re-Read Of The Chosen Slot, Then Append, Resume, Monitor On
-        byte[] expected = [3, 21, 21, 21, 21, 21, 21, 21, 21, 21, 20, 11, 22];
+        // Eight Slot Reads, A Confirming Re-Read Of The Chosen Slot, Then Append, Resume, Monitor On,
+        // Then The Config Read: Opening GET_CONFIG, No Mappings, Confirming GET_CONFIG
+        byte[] expected = [3, 21, 21, 21, 21, 21, 21, 21, 21, 21, 20, 11, 22, 3, 3];
         CollectionAssert.AreEqual(expected, Config.Commands.ToArray());
         Assert.AreEqual((byte)0, Config.Sent[9][3], "re-reads the chosen slot");
         Assert.AreEqual((byte)0, Config.Sent[10][3], "appends into the first empty slot");
@@ -81,7 +86,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
 
         Assert.AreEqual(0, Config.Count(Protocol.CmdAppendToExpression));
         Assert.AreEqual(0, Config.Count(Protocol.CmdResume));
-        Assert.AreEqual(Protocol.CmdSetMonitorEnabled, Config.Commands[^1]);
+        Assert.AreEqual(1, Config.Count(Protocol.CmdSetMonitorEnabled));
     }
 
     [TestMethod]
@@ -102,8 +107,10 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         Config.ForeignReply = (Protocol.CmdGetConfig, Replies.Config(19));
 
         await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
 
-        Assert.AreEqual(2, Config.Count(Protocol.CmdGetConfig));
+        // Two Version Reads, Then The Config Read's Opening And Closing Reads
+        Assert.AreEqual(4, Config.Count(Protocol.CmdGetConfig));
     }
 
     [TestMethod]
@@ -480,7 +487,187 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         await Eventually.Until(() => Config.Count(Protocol.CmdAppendToExpression) == 2);
         await _service.DisposeAsync();
 
-        byte[] allowed = [Protocol.CmdGetConfig, Protocol.CmdResume, Protocol.CmdAppendToExpression, Protocol.CmdGetExpression, Protocol.CmdSetMonitorEnabled];
+        byte[] allowed = [Protocol.CmdGetConfig, Protocol.CmdResume, Protocol.CmdAppendToExpression, Protocol.CmdGetExpression, Protocol.CmdSetMonitorEnabled, Protocol.CmdGetMapping, Protocol.CmdGetMacro];
         Assert.IsTrue(Config.Commands.All(allowed.Contains));
+    }
+
+    // =========================================================================
+    // CONFIG READ
+    // =========================================================================
+
+    [TestMethod]
+    public async Task Connect_ReadsMappingsAfterInstall()
+    {
+        Config.Mappings.Add((0x00070004, 0xFFF20001, 1, 0));
+        Config.Mappings.Add((0x00070005, 0x000C00E9, 2, 0b10));
+        Config.Macros[0]        = [0x000700E0, 0x00070006, 0, 0x00070019];
+        Config.DescriptorNumber = 2;
+
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        // Install Commands First, Then GET_CONFIG, Two GET_MAPPING, One GET_MACRO, Then The Confirming GET_CONFIG
+        var tail = Config.Commands.Skip(13).ToArray();
+        CollectionAssert.AreEqual(new byte[] { 3, 6, 6, 17, 3 }, tail);
+        var config = _configs[0];
+        Assert.AreEqual((byte)2, config.DescriptorNumber);
+        Assert.HasCount(2, config.Mappings);
+        Assert.IsTrue(config.Mappings[1].Tap);
+        Assert.HasCount(2, config.Macros[0]);
+        Assert.IsEmpty(config.Macros[1]);
+        Assert.AreSame(config, _service.Config);
+    }
+
+    [TestMethod]
+    public async Task Connect_LongMacroReadsAllChunks()
+    {
+        Config.Mappings.Add((1, 0xFFF20002, 1, 0));
+        Config.Macros[1] = Enumerable.Range(1, 13).Select(i => (uint)i).ToArray();   // 13 Usages, No Separators: 6 + 6 + 1
+
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        Assert.AreEqual(3, Config.Count(Protocol.CmdGetMacro));
+        Assert.HasCount(13, _configs[0].Macros[1][0]);
+    }
+
+    [TestMethod]
+    public async Task Connect_LongMacroStopsAtTheCap()
+    {
+        // A Run Of Full Chunks (A Stray Reply, Or Garbage) Must Not Loop Forever
+        Config.Mappings.Add((1, 0xFFF20002, 1, 0));
+        Config.Macros[1] = Enumerable.Range(1, Protocol.MaxMacroUsages + 60).Select(i => (uint)i).ToArray();
+
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        var chunks = (Protocol.MaxMacroUsages + Protocol.MacroItemsPerPacket - 1) / Protocol.MacroItemsPerPacket;
+        Assert.AreEqual(chunks, Config.Count(Protocol.CmdGetMacro));
+    }
+
+    [TestMethod]
+    public async Task Connect_ReadsEachMacroSlotOnce()
+    {
+        Config.Mappings.Add((1, 0xFFF20002, 1, 0));
+        Config.Mappings.Add((2, 0xFFF20002, 2, 0));
+        Config.Macros[1] = [5];
+
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        Assert.AreEqual(1, Config.Count(Protocol.CmdGetMacro));
+    }
+
+    [TestMethod]
+    public async Task Connect_NoSlotStillReadsMappings()
+    {
+        Config.FillAllSlots();
+        Config.Mappings.Add((1, 2, 1, 0));
+
+        await ConnectAsync(DeviceStatus.NoSlot);
+        await Eventually.Until(() => _configs.Count == 1);
+    }
+
+    [TestMethod]
+    public async Task Connect_WrongVersionReadsNoMappings()
+    {
+        Config.Version = 19;
+        Config.Mappings.Add((1, 2, 1, 0));
+
+        await ConnectAsync(DeviceStatus.VersionMismatch);
+        await Eventually.Settle();
+
+        Assert.AreEqual(0, Config.Count(Protocol.CmdGetMapping));
+        Assert.IsEmpty(_configs);
+        Assert.IsNull(_service.Config);
+    }
+
+    [TestMethod]
+    public async Task Refresh_RunsOnNextTickAndCoalesces()
+    {
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+        var before = Config.Count(Protocol.CmdGetConfig);
+
+        _service.RequestConfigRefresh();
+        _service.RequestConfigRefresh();
+        _service.RequestConfigRefresh();
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => _configs.Count == 2);
+        await Eventually.Settle();
+
+        Assert.AreEqual(before + 2, Config.Count(Protocol.CmdGetConfig), "one read: opening GET_CONFIG and confirming GET_CONFIG");
+    }
+
+    [TestMethod]
+    public async Task Refresh_DiscardsWhenCountMovesMidRead()
+    {
+        Config.Mappings.Add((1, 2, 1, 0));
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        // The Web Tool Saves While We Read: One GET_CONFIG Sees A Different Count Than The Other
+        Config.ForeignReply = (Protocol.CmdGetConfig, Replies.Config(18, mappingCount: 5));
+        _service.RequestConfigRefresh();
+        _time.Advance(DeviceService.VerifyInterval);
+
+        // The Foreign Count Of 5 Drives Five GET_MAPPING Reads, Then The Closing GET_CONFIG Disagrees
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetConfig) >= 5);
+        await Eventually.Settle();
+
+        Assert.AreEqual(6, Config.Count(Protocol.CmdGetMapping), "one from the first read, five from the poisoned one");
+        Assert.HasCount(1, _configs);
+    }
+
+    [TestMethod]
+    public async Task Refresh_BadReadRaisesNothing()
+    {
+        Config.Mappings.Add((1, 2, 1, 0));
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        Config.ShortReplies = DeviceService.ReadAttempts;   // The Refresh's First Read Exhausts Its Retries
+        _service.RequestConfigRefresh();
+        _time.Advance(DeviceService.VerifyInterval);
+
+        // Walk The Doubling Retry Delays To Exhaustion
+        for (var i = 0; i < DeviceService.ReadAttempts + 2; i++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(5));
+            await Eventually.Settle();
+        }
+
+        Assert.HasCount(1, _configs);
+        Assert.AreEqual(DeviceStatus.Connected, _service.State.Status);
+    }
+
+    [TestMethod]
+    public async Task Refresh_LargeTableDoesNotBlockVerify()
+    {
+        for (var i = 0; i < 300; i++)
+        {
+            Config.Mappings.Add(((uint)i, 2, 1, 0));
+        }
+
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+        Assert.HasCount(300, _configs[0].Mappings);
+
+        var verifies = Config.Count(Protocol.CmdGetExpression);
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) > verifies);
+    }
+
+    [TestMethod]
+    public async Task Disconnect_KeepsLastConfig()
+    {
+        Config.Mappings.Add((1, 2, 1, 0));
+        await ConnectAsync();
+        await Eventually.Until(() => _configs.Count == 1);
+
+        _source.Depart();
+        await Eventually.Until(() => _service.State.Status == DeviceStatus.Disconnected);
+
+        Assert.IsNotNull(_service.Config);
     }
 }

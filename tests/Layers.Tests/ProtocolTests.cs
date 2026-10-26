@@ -297,4 +297,109 @@ public sealed class ProtocolTests
         Assert.IsTrue(Protocol.TryParseMonitorReport(report, out var mask));
         Assert.AreEqual((byte)4, mask.Bits);
     }
+
+    // =========================================================================
+    // MAPPINGS AND MACROS
+    // =========================================================================
+
+    [TestMethod]
+    public void GetMapping_PayloadIsIndexU32()
+    {
+        var packet = Protocol.GetMapping(0x0102);
+
+        Assert.AreEqual(Protocol.CmdGetMapping, packet[2]);
+        CollectionAssert.AreEqual(new byte[] { 0x02, 0x01, 0, 0 }, packet[3..7]);
+    }
+
+    [TestMethod]
+    public void GetMacro_PayloadIsMacroThenOffset()
+    {
+        var packet = Protocol.GetMacro(3, 12);
+
+        Assert.AreEqual(Protocol.CmdGetMacro, packet[2]);
+        CollectionAssert.AreEqual(new byte[] { 3, 0, 0, 0, 12, 0, 0, 0 }, packet[3..11]);
+    }
+
+    [TestMethod]
+    public void ConfigSummary_ReadsCountAndDescriptor()
+    {
+        var reply = Replies.Config(18, mappingCount: 0x0105, descriptorNumber: 3);
+
+        Assert.IsTrue(Protocol.TryParseConfigSummary(reply, out var summary));
+        Assert.AreEqual((byte)18, summary.Version);
+        Assert.AreEqual((ushort)0x0105, summary.MappingCount);
+        Assert.AreEqual((byte)3, summary.DescriptorNumber);
+    }
+
+    [TestMethod]
+    public void ConfigSummary_RejectsOtherVersion()
+    {
+        // A Stray Reply To Someone Else's Command Must Not Set The Mapping Count
+        Assert.IsFalse(Protocol.TryParseConfigSummary(Replies.Config(19, mappingCount: 5), out _));
+    }
+
+    [TestMethod]
+    public void ConfigSummary_RejectsHugeCount()
+    {
+        Assert.IsFalse(Protocol.TryParseConfigSummary(Replies.Config(18, mappingCount: 0xFFFF), out _));
+        Assert.IsTrue(Protocol.TryParseConfigSummary(Replies.Config(18, mappingCount: Protocol.MaxMappings), out _));
+    }
+
+    [TestMethod]
+    public void Mapping_ParsesFieldsAndFlags()
+    {
+        var reply = Replies.Mapping(target: 0xFFF2_0003, source: 0x0007_0004, layerMask: 0b0101, flags: 0b111);
+
+        Assert.IsTrue(Protocol.TryParseMapping(reply, out var mapping));
+        Assert.AreEqual(0x0007_0004u, mapping.Source);
+        Assert.AreEqual(0xFFF2_0003u, mapping.Target);
+        Assert.AreEqual((byte)0b0101, mapping.LayerMask);
+        Assert.IsTrue(mapping.Sticky && mapping.Tap && mapping.Hold);
+        Assert.AreEqual(2, mapping.MacroIndex);
+    }
+
+    [TestMethod]
+    public void Mapping_NonMacroTargetHasNoMacroIndex()
+    {
+        var reply = Replies.Mapping(target: 0x000C_00E9, source: 0x0007_0004, layerMask: 1, flags: 0);
+
+        Assert.IsTrue(Protocol.TryParseMapping(reply, out var mapping));
+        Assert.IsNull(mapping.MacroIndex);
+    }
+
+    [TestMethod]
+    public void Mapping_BadCrcFails()
+    {
+        var reply = Replies.Mapping(1, 2, 1, 0);
+        reply[5] ^= 0xFF;
+
+        Assert.IsFalse(Protocol.TryParseMapping(reply, out _));
+    }
+
+    [TestMethod]
+    public void MacroChunk_ReadsCountedUsages()
+    {
+        var reply = Replies.MacroChunk([0x000700E0, 0x00070006, 0, 0x00070019]);
+
+        Assert.IsTrue(Protocol.TryParseMacroChunk(reply, out var chunk));
+        Assert.AreEqual((byte)4, chunk.Count);
+        CollectionAssert.AreEqual(new uint[] { 0x000700E0, 0x00070006, 0, 0x00070019 }, chunk.Usages);
+    }
+
+    [TestMethod]
+    public void AssembleMacro_SplitsStepsOnZero()
+    {
+        var steps = Protocol.AssembleMacro([
+            new MacroChunk(6, [0x000700E0, 0x00070006, 0, 0x000700E0, 0x00070019, 0]),
+            new MacroChunk(1, [0x00070004]),
+        ]);
+
+        Assert.HasCount(3, steps);
+        CollectionAssert.AreEqual(new uint[] { 0x000700E0, 0x00070006 }, steps[0].ToArray());
+        CollectionAssert.AreEqual(new uint[] { 0x000700E0, 0x00070019 }, steps[1].ToArray());
+        CollectionAssert.AreEqual(new uint[] { 0x00070004 }, steps[2].ToArray());
+    }
+
+    [TestMethod]
+    public void AssembleMacro_EmptyIsEmpty() => Assert.IsEmpty(Protocol.AssembleMacro([new MacroChunk(0, [])]));
 }

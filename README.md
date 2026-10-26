@@ -34,6 +34,18 @@ Click the tray icon and choose **Settings…**. Under **HUD**, turn **Show HUD**
 
 Stored under `HKCU\Software\Layers`.
 
+## Shortcut sheet
+
+Left-click the tray icon, pick **Shortcuts** from its menu, or press **Win+Shift+L** from anywhere to see every shortcut on your HID Remapper. Each layer gets its own section, with the layer you're on marked **Active**. Inside a layer, every mapped key is one row: the key on the left, and everything it does on that layer on the right, so a key's tap and hold read together. Tap, hold and sticky mappings are tinted, macros spell out the keys they send, and mouse buttons, media keys, scrolling, layers and macros carry their own icons. The search box filters the list. Esc, clicking elsewhere, or pressing the hotkey again closes it.
+
+The pencil in the footer opens the web config tool ([remapper.org/config](https://remapper.org/config) unless you change it) so you can edit your shortcuts. The sheet re-reads the device every time it opens, so your edits show up as soon as you save.
+
+Under **Settings › Shortcuts** you can:
+
+- Change or clear the hotkey.
+- Change the web config tool's address.
+- Say what each expression does. Expressions are hard to read on their own, so the sheet shows your description in their place. Put a key name in braces, like `Hold {Back} and swipe left`, or pick one with the key button, and it shows as a key.
+
 ## How it reads the layer
 
 The firmware has no command for it, so on connect the app writes the expression `layer_state 0xFF000001 monitor` into a free expression slot and reads it back over Monitor mode.
@@ -56,6 +68,6 @@ That builds `dist\Layers-<version>.msi` and `dist\Layers-<version>.msix`. Set `L
 
 ## Credits
 
-Glyphs from [fluentui-system-icons](https://github.com/microsoft/fluentui-system-icons) (MIT) — see [`assets/NOTICE-fluentui.txt`](assets/NOTICE-fluentui.txt). Built for [jfedor2/hid-remapper](https://github.com/jfedor2/hid-remapper).
+Glyphs from [fluentui-system-icons](https://github.com/microsoft/fluentui-system-icons) (MIT) — see [`assets/NOTICE-fluentui.txt`](assets/NOTICE-fluentui.txt). The shortcut picker and key caps are from [PowerToys](https://github.com/microsoft/PowerToys) (MIT), and the key names come from the web config tool's `usages.js` — see [`assets/NOTICE-powertoys.txt`](assets/NOTICE-powertoys.txt). Built for [jfedor2/hid-remapper](https://github.com/jfedor2/hid-remapper).
 
 [MIT](LICENSE).

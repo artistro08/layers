@@ -13,8 +13,14 @@ public enum TrayAction
     /// <summary>Pass to <c>DefWindowProc</c>.</summary>
     None,
 
-    /// <summary>Open the tray menu.</summary>
+    /// <summary>Open the tray menu (right-click).</summary>
     OpenMenu,
+
+    /// <summary>Toggle the shortcut sheet flyout (left-click).</summary>
+    OpenFlyout,
+
+    /// <summary><c>WM_HOTKEY</c>: the registered global shortcut was pressed.</summary>
+    Hotkey,
 
     /// <summary>Explorer restarted: add the icon again with <c>NIM_ADD</c>.</summary>
     ReAddIcon,
@@ -30,8 +36,8 @@ public enum TrayAction
 /// Decides what the hidden tray window does with each message.
 /// </summary>
 /// <remarks>
-/// Kept pure so it's testable without a window. A left or right button-up on the icon opens the menu (there's no
-/// separate context menu). <c>TaskbarCreated</c> means Explorer restarted. <c>WM_SETTINGCHANGE</c> (including
+/// Kept pure so it's testable without a window. A left button-up on the icon toggles the shortcut sheet and a right
+/// button-up opens the menu. <c>WM_HOTKEY</c> is the global shortcut. <c>TaskbarCreated</c> means Explorer restarted. <c>WM_SETTINGCHANGE</c> (including
 /// "ImmersiveColorSet" for the taskbar theme) and <c>WM_DPICHANGED</c> redraw the icon. <c>WM_CLOSE</c> quits, so the
 /// MSI's <c>CloseApplication</c> can close the app cleanly before replacing files.
 /// </remarks>
@@ -61,8 +67,18 @@ public static class TrayMessageRouter
         // Icon Clicks
         if (message == TrayCallbackMessage)
         {
-            var mouse = (uint)(lParam & 0xFFFF);
-            return mouse is PInvoke.WM_LBUTTONUP or PInvoke.WM_RBUTTONUP ? TrayAction.OpenMenu : TrayAction.None;
+            return (uint)(lParam & 0xFFFF) switch
+            {
+                PInvoke.WM_LBUTTONUP => TrayAction.OpenFlyout,
+                PInvoke.WM_RBUTTONUP => TrayAction.OpenMenu,
+                _                    => TrayAction.None,
+            };
+        }
+
+        // Global Shortcut
+        if (message == PInvoke.WM_HOTKEY)
+        {
+            return TrayAction.Hotkey;
         }
 
         // Clean Shutdown Request

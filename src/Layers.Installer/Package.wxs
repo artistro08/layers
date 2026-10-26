@@ -33,12 +33,19 @@
             <Files Include="$(PublishDir)**" />
         </ComponentGroup>
 
-        <!-- Third-Party Notice (Solid Layers Icon, MIT) -->
+        <!-- Third-Party Notices (Solid Layers Icon; PowerToys Picker And Web Tool Key Names, MIT) -->
         <Component Id="NoticeFile" Directory="INSTALLFOLDER">
             <File
                 Id="NoticeFluentUi"
                 Source="..\..\assets\NOTICE-fluentui.txt"
                 Name="NOTICE-fluentui.txt"
+                KeyPath="yes" />
+        </Component>
+        <Component Id="NoticePowerToysFile" Directory="INSTALLFOLDER">
+            <File
+                Id="NoticePowerToys"
+                Source="..\..\assets\NOTICE-powertoys.txt"
+                Name="NOTICE-powertoys.txt"
                 KeyPath="yes" />
         </Component>
 
@@ -132,6 +139,7 @@
         <Feature Id="Main">
             <ComponentGroupRef Id="AppFiles" />
             <ComponentRef Id="NoticeFile" />
+            <ComponentRef Id="NoticePowerToysFile" />
             <ComponentRef Id="StartMenuShortcut" />
             <ComponentRef Id="RunAtSignIn" />
         </Feature>
