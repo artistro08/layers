@@ -1,0 +1,311 @@
+// Copyright (c) Microsoft Corporation
+// The Microsoft Corporation licenses this file to you under the MIT license.
+// See the LICENSE file in the project root for more information.
+//
+// Ported from PowerToys: src/common/Common.UI.Controls/Controls/KeyVisual/KeyVisual.xaml.cs
+// (https://github.com/microsoft/PowerToys), by way of MagicBuds, whose changes are kept (Native AOT: nothing from the
+// template is read back through a typed cast): the presenter's style and content are this control's PresenterStyle and
+// PresenterContent, which the template binds, instead of being set on the template part; Update also runs when Content
+// changes.
+
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Controls;
+using Windows.System;
+
+namespace Layers.UI.Controls;
+
+/// <summary>
+/// One key drawn as a key cap, PowerToys' KeyVisual.
+/// </summary>
+/// <remarks>
+/// Text, or a glyph for Win, Shift, Enter, Backspace, and the arrows. <see cref="Content"/> is the key's name as a
+/// string or a virtual-key code as an int (92 is Win, 16 is Shift).
+/// </remarks>
+[TemplateVisualState(Name = NormalState, GroupName = "CommonStates")]
+[TemplateVisualState(Name = DisabledState, GroupName = "CommonStates")]
+[TemplateVisualState(Name = InvalidState, GroupName = "CommonStates")]
+[TemplateVisualState(Name = WarningState, GroupName = "CommonStates")]
+public sealed partial class KeyVisual : Control
+{
+    private const string NormalState   = "Normal";
+    private const string DisabledState = "Disabled";
+    private const string InvalidState  = "Invalid";
+    private const string WarningState  = "Warning";
+
+    /// <summary>Identifies <see cref="Content"/>.</summary>
+    public static readonly DependencyProperty ContentProperty =
+        DependencyProperty.Register(nameof(Content), typeof(object), typeof(KeyVisual), new PropertyMetadata(default(string), OnContentChanged));
+
+    /// <summary>Identifies <see cref="State"/>.</summary>
+    public static readonly DependencyProperty StateProperty =
+        DependencyProperty.Register(nameof(State), typeof(KeyVisualState), typeof(KeyVisual), new PropertyMetadata(KeyVisualState.Normal, OnStateChanged));
+
+    /// <summary>Identifies <see cref="RenderKeyAsGlyph"/>.</summary>
+    public static readonly DependencyProperty RenderKeyAsGlyphProperty =
+        DependencyProperty.Register(nameof(RenderKeyAsGlyph), typeof(bool), typeof(KeyVisual), new PropertyMetadata(false, OnContentChanged));
+
+    /// <summary>Identifies <see cref="PresenterStyle"/>.</summary>
+    public static readonly DependencyProperty PresenterStyleProperty =
+        DependencyProperty.Register(nameof(PresenterStyle), typeof(Style), typeof(KeyVisual), new PropertyMetadata(null));
+
+    /// <summary>Identifies <see cref="PresenterContent"/>.</summary>
+    public static readonly DependencyProperty PresenterContentProperty =
+        DependencyProperty.Register(nameof(PresenterContent), typeof(object), typeof(KeyVisual), new PropertyMetadata(default(string)));
+
+    /// <summary>Creates the key.</summary>
+    public KeyVisual()
+    {
+        DefaultStyleKey = typeof(KeyVisual);
+    }
+
+    /// <summary>Gets or sets the key: its name as text, or a virtual-key code.</summary>
+    public object Content
+    {
+        get => GetValue(ContentProperty);
+        set => SetValue(ContentProperty, value);
+    }
+
+    /// <summary>Gets or sets how the cap is drawn: Normal, Error (the combination can't be used), or Warning (it's taken).</summary>
+    public KeyVisualState State
+    {
+        get => (KeyVisualState)GetValue(StateProperty);
+        set => SetValue(StateProperty, value);
+    }
+
+    /// <summary>Gets or sets a value indicating whether Shift, Enter, Backspace, and the arrows draw as glyphs instead of names.</summary>
+    public bool RenderKeyAsGlyph
+    {
+        get => (bool)GetValue(RenderKeyAsGlyphProperty);
+        set => SetValue(RenderKeyAsGlyphProperty, value);
+    }
+
+    /// <summary>Gets the presenter's style (text, glyph, or the Windows logo), for the template.</summary>
+    public Style PresenterStyle
+    {
+        get => (Style)GetValue(PresenterStyleProperty);
+        private set => SetValue(PresenterStyleProperty, value);
+    }
+
+    /// <summary>Gets what the presenter shows (the key's text or glyph), for the template.</summary>
+    public object PresenterContent
+    {
+        get => GetValue(PresenterContentProperty);
+        private set => SetValue(PresenterContentProperty, value);
+    }
+
+    /// <inheritdoc />
+    protected override void OnApplyTemplate()
+    {
+        IsEnabledChanged -= KeyVisual_IsEnabledChanged;
+        PresenterStyle  ??= Resource("DefaultKeyCharPresenterStyle");
+        Update();
+        SetVisualStates();
+        IsEnabledChanged += KeyVisual_IsEnabledChanged;
+        base.OnApplyTemplate();
+    }
+
+    private static void OnContentChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+    {
+        ((KeyVisual)d).Update();
+        ((KeyVisual)d).SetVisualStates();
+    }
+
+    private static void OnStateChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) => ((KeyVisual)d).SetVisualStates();
+
+    private static Style Resource(string key) => (Style)Application.Current.Resources[key];
+
+    private void SetVisualStates()
+    {
+        var state = State switch
+        {
+            KeyVisualState.Error   => InvalidState,
+            KeyVisualState.Warning => WarningState,
+            _ when !IsEnabled      => DisabledState,
+            _                      => NormalState,
+        };
+        VisualStateManager.GoToState(this, state, true);
+    }
+
+    private void Update()
+    {
+        if (Content is null)
+        {
+            return;
+        }
+
+        // A Name: Arrows Draw As Glyphs, Anything Else As Text
+        if (Content is string key)
+        {
+            PresenterContent = key;
+            switch (key)
+            {
+                case nameof(VirtualKey.Up):
+                    SetGlyphOrText("", VirtualKey.Up);
+                    break;
+                case nameof(VirtualKey.Down):
+                    SetGlyphOrText("", VirtualKey.Down);
+                    break;
+                case nameof(VirtualKey.Left):
+                    SetGlyphOrText("", VirtualKey.Left);
+                    break;
+                case nameof(VirtualKey.Right):
+                    SetGlyphOrText("", VirtualKey.Right);
+                    break;
+
+                // Layers: The Web Tool's Key Names, Drawn The Way The PowerToys Shortcut Guide Draws Keys
+                case "Left GUI" or "Right GUI":
+                    PresenterStyle = Resource("WindowsKeyCharPresenterStyle");
+                    break;
+                case "Left Control" or "Right Control":
+                    PresenterContent = "Ctrl";
+                    PresenterStyle   = Resource("DefaultKeyCharPresenterStyle");
+                    break;
+                case "Left Alt" or "Right Alt":
+                    PresenterContent = "Alt";
+                    PresenterStyle   = Resource("DefaultKeyCharPresenterStyle");
+                    break;
+                case "Escape":
+                    PresenterContent = "Esc";
+                    PresenterStyle   = Resource("DefaultKeyCharPresenterStyle");
+                    break;
+                case "Left button":
+                    PresenterStyle = Resource("MouseLeftKeyCharPresenterStyle");
+                    break;
+                case "Right button":
+                    PresenterStyle = Resource("MouseRightKeyCharPresenterStyle");
+                    break;
+                case "Middle button":
+                    PresenterStyle = Resource("MouseMiddleKeyCharPresenterStyle");
+                    break;
+                case var media when MediaStyle(media) is { } mediaStyle:
+                    PresenterStyle = Resource(mediaStyle);
+                    break;
+                default:
+                    if (GlyphFor(key) is { } glyph)
+                    {
+                        SetGlyph(glyph);
+                        break;
+                    }
+
+                    PresenterStyle = Resource("DefaultKeyCharPresenterStyle");
+                    break;
+            }
+
+            return;
+        }
+
+        // A Virtual-Key Code
+        if (Content is int keyCode)
+        {
+            var virtualKey = (VirtualKey)keyCode;
+            switch (virtualKey)
+            {
+                case VirtualKey.Enter:
+                    SetGlyphOrText("", virtualKey);
+                    break;
+                case VirtualKey.Back:
+                    SetGlyphOrText("", virtualKey);
+                    break;
+                case VirtualKey.Shift:
+                case VirtualKey.LeftShift:
+                case VirtualKey.RightShift:
+                    SetGlyphOrText("", VirtualKey.Shift);
+                    break;
+                case VirtualKey.Up:
+                    SetGlyphOrText("", virtualKey);
+                    break;
+                case VirtualKey.Down:
+                    SetGlyphOrText("", virtualKey);
+                    break;
+                case VirtualKey.Left:
+                    SetGlyphOrText("", virtualKey);
+                    break;
+                case VirtualKey.Right:
+                    SetGlyphOrText("", virtualKey);
+                    break;
+                case VirtualKey.LeftWindows:
+                case VirtualKey.RightWindows:
+                    PresenterStyle = Resource("WindowsKeyCharPresenterStyle");
+                    break;
+                default:
+                    break;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Tells whether a key draws as a bare glyph with no cap behind it.
+    /// </summary>
+    /// <remarks>
+    /// Layers: mouse buttons and media keys are icons, not keys you press on a keyboard, so they skip the cap.
+    /// </remarks>
+    /// <param name="name">The key's name as the web config tool gives it.</param>
+    /// <returns><see langword="true"/> for mouse buttons and media keys.</returns>
+    public static bool IsBare(string name) => name is "Left button" or "Right button" or "Middle button" || MediaStyle(name) is not null;
+
+    // Layers: Glyphs For The Web Tool's Names (Segoe Fluent Icons): Shift, Arrows, Enter, Backspace
+    private static string? GlyphFor(string name) => name switch
+    {
+        "Left Shift" or "Right Shift" => "",
+        "Up arrow"                    => "",
+        "Down arrow"                  => "",
+        "Left arrow"                  => "",
+        "Right arrow"                 => "",
+        "Enter" or "Keypad Enter"     => "",
+        "Backspace"                   => "",
+        _                             => null,
+    };
+
+    // Layers: Media Keys Draw Solid Icons From Styles/KeyCharPresenter.xaml
+    private static string? MediaStyle(string name) => name switch
+    {
+        "Volume up"      => "VolumeUpKeyCharPresenterStyle",
+        "Volume down"    => "VolumeDownKeyCharPresenterStyle",
+        "Mute"           => "MuteKeyCharPresenterStyle",
+        "Play/pause"     => "PlayPauseKeyCharPresenterStyle",
+        "Stop"           => "StopKeyCharPresenterStyle",
+        "Next track"     => "NextTrackKeyCharPresenterStyle",
+        "Previous track" => "PreviousTrackKeyCharPresenterStyle",
+        _                => null,
+    };
+
+    private void SetGlyph(string glyph)
+    {
+        PresenterContent = glyph;
+        PresenterStyle   = Resource("GlyphKeyCharPresenterStyle");
+    }
+
+    private void SetGlyphOrText(string glyph, VirtualKey key)
+    {
+        if (RenderKeyAsGlyph)
+        {
+            PresenterContent = glyph;
+            PresenterStyle   = Resource("GlyphKeyCharPresenterStyle");
+        }
+        else
+        {
+            PresenterContent = key.ToString();
+            PresenterStyle   = Resource("DefaultKeyCharPresenterStyle");
+        }
+    }
+
+    private void KeyVisual_IsEnabledChanged(object sender, DependencyPropertyChangedEventArgs e) => SetVisualStates();
+}
+
+/// <summary>
+/// How a <see cref="KeyVisual"/> is drawn, PowerToys' <c>State</c>.
+/// </summary>
+/// <remarks>
+/// Error and Warning use the critical and caution theme colors.
+/// </remarks>
+public enum KeyVisualState
+{
+    /// <summary>The usual key cap.</summary>
+    Normal,
+
+    /// <summary>The combination can't be used.</summary>
+    Error,
+
+    /// <summary>The combination is taken.</summary>
+    Warning,
+}

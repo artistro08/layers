@@ -115,6 +115,48 @@ public sealed class HardwareTests
 
     [TestMethod]
     [TestCategory("Hardware")]
+    [Timeout(30_000)]
+    public async Task RealDevice_ReadsMappingsWithNames()
+    {
+        await RequireDeviceAsync();
+        await using var service = new DeviceService(new WinRtHidDeviceSource(), TimeProvider.System);
+        var read                = new TaskCompletionSource<DeviceConfig>();
+        service.ConfigChanged  += (_, config) => read.TrySetResult(config);
+
+        var state = await ConnectAsync(service);
+        Assert.AreEqual(DeviceStatus.Connected, state.Status, $"device reported {state.Status}");
+        var config = await read.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+        // Every Input Resolves To A Name, And The Sheet Lists What The Device Reports
+        var sheet = ShortcutSheet.Build(config);
+        foreach (var section in sheet)
+        {
+            foreach (var key in section.Keys)
+            {
+                foreach (var row in key.Rows)
+                {
+                    var output = row.Output switch
+                    {
+                        MacroOutput macro => $"Macro {macro.Number}: {string.Join(", ", macro.Steps.Select(step => string.Join("+", step)))} ({macro.Steps.Count} steps)",
+                        KeysOutput keys   => string.Join("+", keys.Keys),
+                        _                 => "?",
+                    };
+                    TestContext.WriteLine($"{section.Title}: {key.Input} -> {output}{(row.Sticky ? " sticky" : "")}{(row.Tap ? " tap" : "")}{(row.Hold ? " hold" : "")}");
+                }
+            }
+        }
+
+        TestContext.WriteLine($"{config.Mappings.Count} mappings, descriptor {config.DescriptorNumber}");
+        Assert.AreEqual(config.Mappings.Count == 0, sheet.Count == 0, "the sheet mirrors the mapping count");
+
+        // Keyboard And Button Inputs Always Have Names; Anything Else Unnamed Is Hex In The Web Tool Too, So It Is Only Reported
+        var unnamed = sheet.SelectMany(s => s.Keys).Select(k => k.Input).Where(name => name.StartsWith("0x", StringComparison.Ordinal)).Distinct().ToList();
+        TestContext.WriteLine(unnamed.Count == 0 ? "every input named" : $"unnamed, as in the web tool: {string.Join(", ", unnamed)}");
+        Assert.IsTrue(unnamed.All(name => !name.StartsWith("0x0007", StringComparison.Ordinal) && !name.StartsWith("0x0009", StringComparison.Ordinal)), "a keyboard or button input had no name");
+    }
+
+    [TestMethod]
+    [TestCategory("Hardware")]
     [TestCategory("Manual")]
     [Timeout(60_000)]
     public async Task RealDevice_ReportsLayerChange()

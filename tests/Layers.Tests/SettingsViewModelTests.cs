@@ -41,6 +41,143 @@ public sealed class SettingsViewModelTests : IDisposable
     private SettingsViewModel Create(StartupState? startup = null) =>
         new(_store, new FakeStartup(startup ?? new StartupState(true, true, null)));
 
+    // =========================================================================
+    // SHORTCUT
+    // =========================================================================
+
+    [TestMethod]
+    public void Shortcut_LoadsFromStore()
+    {
+        _store.SaveShortcut(null);
+
+        Assert.IsNull(Create().Shortcut);
+        Assert.AreEqual(Hotkey.Default, new SettingsViewModel(new SettingsStore(new TempRegistryKey().Path), new FakeStartup(new StartupState(true, true, null))).Shortcut);
+    }
+
+    [TestMethod]
+    public void SetShortcut_SavesAndRaises()
+    {
+        var model      = Create();
+        Hotkey? raised = default;
+        model.ShortcutChanged += (_, h) => raised = h;
+        var hotkey = new Hotkey(HotkeyModifiers.Win | HotkeyModifiers.Alt, 'K');
+
+        model.SetShortcut(hotkey);
+
+        Assert.AreEqual(hotkey, raised);
+        Assert.AreEqual(hotkey, model.Shortcut);
+        Assert.AreEqual(hotkey, _store.LoadShortcut());
+    }
+
+    [TestMethod]
+    public void SetShortcut_NullClears()
+    {
+        var model = Create();
+
+        model.SetShortcut(null);
+
+        Assert.IsNull(model.Shortcut);
+        Assert.IsNull(_store.LoadShortcut());
+    }
+
+    [TestMethod]
+    public void ShortcutTaken_RaisesChange()
+    {
+        var model  = Create();
+        var raised = new List<string>();
+        model.PropertyChanged += (_, e) => raised.Add(e.PropertyName!);
+
+        model.ShortcutTaken = true;
+        model.ShortcutNote  = "kept the old one";
+
+        CollectionAssert.IsSubsetOf(new[] { "ShortcutTaken", "ShortcutNote", "HasShortcutNote" }, raised);
+        Assert.IsTrue(model.HasShortcutNote);
+    }
+
+    // =========================================================================
+    // EXPRESSIONS
+    // =========================================================================
+
+    [TestMethod]
+    public void Expressions_ListUsedSlotsAndSavedOnes()
+    {
+        _store.SaveMeaning(4, "Swipe right while holding Back");
+        var model = Create();
+
+        model.ExpressionUses = [new ExpressionUse(1, ["Forward"]), new ExpressionUse(2, ["V scroll"])];
+
+        // Slot 4 Isn't Mapped Right Now, But Its Saved Meaning Stays Editable
+        CollectionAssert.AreEqual(new[] { 1, 2, 4 }, model.Expressions.Select(e => e.Slot).ToArray());
+        Assert.AreEqual("Expression 1", model.Expressions[0].Title);
+        Assert.AreEqual("Drives Forward", model.Expressions[0].Drives);
+        Assert.AreEqual("Swipe right while holding Back", model.Expressions[2].Text);
+        Assert.AreEqual("Not mapped right now", model.Expressions[2].Drives);
+        Assert.IsFalse(model.ShowExpressionsNote);
+    }
+
+    [TestMethod]
+    public void Expressions_NoneKnownShowsTheNote()
+    {
+        var model = Create();
+
+        Assert.IsEmpty(model.Expressions);
+        Assert.IsTrue(model.ShowExpressionsNote);
+    }
+
+    [TestMethod]
+    public void ExpressionText_SavesAndRaises()
+    {
+        var model = Create();
+        model.ExpressionUses = [new ExpressionUse(7, ["Macro 14"])];
+        IReadOnlyDictionary<int, string>? raised = null;
+        model.MeaningsChanged += (_, meanings) => raised = meanings;
+
+        model.Expressions[0].Text = "Tap {Back} or swipe left";
+
+        Assert.AreEqual("Tap {Back} or swipe left", _store.LoadMeanings()[7]);
+        Assert.AreEqual("Tap {Back} or swipe left", raised![7]);
+    }
+
+    [TestMethod]
+    public void ExpressionText_BlankClears()
+    {
+        _store.SaveMeaning(7, "Old");
+        var model = Create();
+        model.ExpressionUses = [new ExpressionUse(7, [])];
+
+        model.Expressions[0].Text = " ";
+
+        Assert.IsFalse(_store.LoadMeanings().ContainsKey(7));
+        Assert.AreEqual("Fed by a key", model.Expressions[0].Drives);
+    }
+
+    [TestMethod]
+    public void EditorUrl_SavesWhenValidAndSaysWhenNot()
+    {
+        var model = Create();
+        Assert.AreEqual("https://remapper.org/config", model.EditorUrlText);
+
+        model.EditorUrlText = "remapper.org/beta";
+        Assert.AreEqual(new Uri("https://remapper.org/beta"), _store.LoadEditorUrl());
+        Assert.IsFalse(model.EditorUrlInvalid);
+
+        model.EditorUrlText = "not a url";
+        Assert.IsTrue(model.EditorUrlInvalid);
+        Assert.AreEqual(new Uri("https://remapper.org/beta"), _store.LoadEditorUrl(), "a bad address isn't saved");
+    }
+
+    [TestMethod]
+    public void EditorUrl_ResetGoesBackToTheDefault()
+    {
+        _store.SaveEditorUrl(new Uri("http://localhost/"));
+        var model = Create();
+
+        model.ResetEditorUrl();
+
+        Assert.AreEqual("https://remapper.org/config", model.EditorUrlText);
+        Assert.AreEqual(SettingsStore.DefaultEditorUrl, _store.LoadEditorUrl());
+    }
+
     [TestMethod]
     public void Loads_StoredSettings()
     {

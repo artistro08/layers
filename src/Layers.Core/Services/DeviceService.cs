@@ -26,9 +26,17 @@ namespace Layers.Core.Services;
 /// version mismatch are confirmed with a second read first.
 /// </para>
 /// <para>
+/// Once a session is announced (Connected or NoSlot) it reads the mapping table and the macros those mappings fire,
+/// and again on the next tick after <see cref="RequestConfigRefresh"/>. Nothing is read on a version mismatch, where
+/// the reply layouts are unverified. A read is one GET_CONFIG, one GET_MAPPING per mapping, GET_MACRO chunks per used
+/// slot, then a confirming GET_CONFIG: if the count or descriptor moved, the web tool saved mid-read and the result is
+/// dropped. Replies carry no tag, so a reply meant for the tool can still land as a wrong row; the sheet re-reads on
+/// every open, so that heals itself.
+/// </para>
+/// <para>
 /// Any session error shows Disconnected and retries after 2 seconds while the device is present. Unplugging cancels
-/// the session. <see cref="StateChanged"/> is raised on background threads, in order, under an internal lock:
-/// handlers must be quick and must marshal to the UI thread themselves.
+/// the session. <see cref="StateChanged"/> and <see cref="ConfigChanged"/> are raised on background threads, in
+/// order, under an internal lock: handlers must be quick and must marshal to the UI thread themselves.
 /// </para>
 /// </remarks>
 public sealed class DeviceService : IAsyncDisposable
@@ -58,6 +66,8 @@ public sealed class DeviceService : IAsyncDisposable
     private CancellationTokenSource? _sessionCancel;
     private Task _sessionTask = Task.CompletedTask;
     private bool _disposed;
+    private DeviceConfig? _config;
+    private volatile bool _refreshRequested;
 
     /// <summary>
     /// Creates the service.
@@ -96,6 +106,34 @@ public sealed class DeviceService : IAsyncDisposable
             }
         }
     }
+
+    /// <summary>
+    /// Raised after a full, confirmed read of the device's mappings and macros.
+    /// </summary>
+    /// <remarks>
+    /// Never raised with a partial result. Raised on a background thread.
+    /// </remarks>
+    public event EventHandler<DeviceConfig>? ConfigChanged;
+
+    /// <summary>Gets the last confirmed config read, or <see langword="null"/> before the first. Kept across a disconnect.</summary>
+    public DeviceConfig? Config
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _config;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Asks for the mappings to be read again on the next check tick.
+    /// </summary>
+    /// <remarks>
+    /// Calls before the tick runs coalesce into one read. Ignored while no session is announced.
+    /// </remarks>
+    public void RequestConfigRefresh() => _refreshRequested = true;
 
     // =========================================================================
     // LIFECYCLE
@@ -305,10 +343,21 @@ public sealed class DeviceService : IAsyncDisposable
         {
             Publish(new DeviceState(status, LayerMask.Base), token);
 
+            // The Sheet's Mappings, Once The Tray Already Shows Connected
+            _refreshRequested = false;
+            await ReadAndPublishConfigAsync(pair.Config, token).ConfigureAwait(false);
+
             // Periodic Re-Verify
             var misses = 0;
             while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
             {
+                // A Requested Re-Read Runs Here, Serialized With The Verify Reads
+                if (_refreshRequested)
+                {
+                    _refreshRequested = false;
+                    await ReadAndPublishConfigAsync(pair.Config, token).ConfigureAwait(false);
+                }
+
                 if (State.Status != DeviceStatus.Connected)
                 {
                     continue;
@@ -412,6 +461,81 @@ public sealed class DeviceService : IAsyncDisposable
             // Not Fatal: The Tool Suspends The Device Mid-Save, So A Refused Write Just Means Try Again Next Tick
             Trace.TraceInformation("monitor re-enable failed: {0}", ex.Message);
         }
+    }
+
+    private async Task ReadAndPublishConfigAsync(IHidChannel config, CancellationToken token)
+    {
+        var result = await ReadConfigAsync(config, token).ConfigureAwait(false);
+        if (result is null)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            if (token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            _config = result;
+            ConfigChanged?.Invoke(this, result);
+        }
+    }
+
+    // Null Means Dropped: A Failed Read, Or The Table Moved Under Us
+    private async Task<DeviceConfig?> ReadConfigAsync(IHidChannel config, CancellationToken token)
+    {
+        try
+        {
+            var opening  = await ReadAsync<ConfigSummary>(config, Protocol.GetConfig(), Protocol.TryParseConfigSummary, token).ConfigureAwait(false);
+            var mappings = new List<Mapping>(opening.MappingCount);
+            for (var i = 0u; i < opening.MappingCount; i++)
+            {
+                mappings.Add(await ReadAsync<Mapping>(config, Protocol.GetMapping(i), Protocol.TryParseMapping, token).ConfigureAwait(false));
+            }
+
+            // Only The Macro Slots Some Mapping Fires
+            var macros = new IReadOnlyList<IReadOnlyList<uint>>[Protocol.MacroSlots];
+            Array.Fill(macros, Array.Empty<IReadOnlyList<uint>>());
+            var used = mappings.Select(m => m.MacroIndex).OfType<int>().Where(i => i >= 0 && i < Protocol.MacroSlots).Distinct();
+            foreach (var slot in used)
+            {
+                macros[slot] = await ReadMacroAsync(config, (uint)slot, token).ConfigureAwait(false);
+            }
+
+            // The Web Tool May Have Saved Mid-Read
+            var closing = await ReadAsync<ConfigSummary>(config, Protocol.GetConfig(), Protocol.TryParseConfigSummary, token).ConfigureAwait(false);
+            if (closing.MappingCount != opening.MappingCount || closing.DescriptorNumber != opening.DescriptorNumber)
+            {
+                Trace.TraceInformation("config read dropped: the table changed during the read");
+                return null;
+            }
+
+            return new DeviceConfig(opening.DescriptorNumber, mappings, macros);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Trace.TraceWarning("config read failed: {0}", ex.Message);
+            return null;
+        }
+    }
+
+    private async Task<IReadOnlyList<IReadOnlyList<uint>>> ReadMacroAsync(IHidChannel config, uint slot, CancellationToken token)
+    {
+        // Capped: A Run Of Full Chunks (A Stray Reply, Or Garbage) Must Not Loop Forever
+        var chunks = new List<MacroChunk>();
+        for (var offset = 0u; offset < Protocol.MaxMacroUsages; offset += Protocol.MacroItemsPerPacket)
+        {
+            var chunk = await ReadAsync<MacroChunk>(config, Protocol.GetMacro(slot, offset), Protocol.TryParseMacroChunk, token).ConfigureAwait(false);
+            chunks.Add(chunk);
+            if (chunk.Count < Protocol.MacroItemsPerPacket)
+            {
+                break;
+            }
+        }
+
+        return Protocol.AssembleMacro(chunks);
     }
 
     private async Task<bool> SlotHoldsOursAsync(IHidChannel config, byte slot, CancellationToken token)

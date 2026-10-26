@@ -17,11 +17,21 @@ public sealed class TrayMessageRouterTests
     }
 
     [TestMethod]
-    [DataRow(0x0202)] // WM_LBUTTONUP
-    [DataRow(0x0205)] // WM_RBUTTONUP
-    public void Route_ButtonUpOpensMenu(int mouseMessage)
+    public void Route_LeftClickOpensFlyout()
     {
-        Assert.AreEqual(TrayAction.OpenMenu, TrayMessageRouter.Route(TrayMessageRouter.TrayCallbackMessage, mouseMessage, TaskbarCreated));
+        Assert.AreEqual(TrayAction.OpenFlyout, TrayMessageRouter.Route(TrayMessageRouter.TrayCallbackMessage, 0x0202, TaskbarCreated)); // WM_LBUTTONUP
+    }
+
+    [TestMethod]
+    public void Route_RightClickOpensMenu()
+    {
+        Assert.AreEqual(TrayAction.OpenMenu, TrayMessageRouter.Route(TrayMessageRouter.TrayCallbackMessage, 0x0205, TaskbarCreated)); // WM_RBUTTONUP
+    }
+
+    [TestMethod]
+    public void Route_HotkeyRoutes()
+    {
+        Assert.AreEqual(TrayAction.Hotkey, TrayMessageRouter.Route(0x0312, 1, TaskbarCreated)); // WM_HOTKEY
     }
 
     [TestMethod]

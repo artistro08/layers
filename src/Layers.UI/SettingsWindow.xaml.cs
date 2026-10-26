@@ -39,7 +39,8 @@ public sealed partial class SettingsWindow : Window
     internal const int LogicalWidth  = 760;
     internal const int LogicalHeight = 595;
 
-    private readonly NavigationViewItem _generalItem = NavItem("General", new FontIcon { Glyph = char.ConvertFromUtf32(0xE713) });
+    private readonly NavigationViewItem _generalItem   = NavItem("General", new FontIcon { Glyph = char.ConvertFromUtf32(0xE713) });
+    private readonly NavigationViewItem _shortcutsItem = NavItem("Shortcuts", new FontIcon { Glyph = char.ConvertFromUtf32(0xE765) });
     private readonly NavigationViewItem _aboutItem   = NavItem("About", new FontIcon { Glyph = char.ConvertFromUtf32(0xE946) });
     private readonly InputNonClientPointerSource _pointer;
     private readonly GeneralPage _general;
@@ -53,7 +54,7 @@ public sealed partial class SettingsWindow : Window
 
         // Pane Items From Concrete Lists
         // CsWinRT's AOT Mode Can't Cast The Native MenuItems Vector That XAML Items Are Added To
-        Nav.MenuItemsSource       = new List<object> { _generalItem };
+        Nav.MenuItemsSource       = new List<object> { _generalItem, _shortcutsItem };
         Nav.FooterMenuItemsSource = new List<object> { _aboutItem };
 
         // General Selected And Shown On Open, Without A Transition
@@ -341,6 +342,9 @@ public sealed partial class SettingsWindow : Window
     private void Window_Closed(object sender, WindowEventArgs args)
     {
         _closed = true;
+
+        // An Open Picker Dialog Must Let Go Of The Keyboard, And WinUI May Not Unload The Page Now
+        (ContentFrame.Content as ShortcutsPage)?.CloseDialogs();
         Current = null;
 
         CaptionButtons.SizeChanged -= CaptionButtons_SizeChanged;
@@ -379,13 +383,15 @@ public sealed partial class SettingsWindow : Window
     private void Nav_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
     {
         // Already Showing It (The Selection On Open)
-        var about = args.SelectedItem == (object)_aboutItem;
-        if (about == (ContentFrame.Content is AboutPage))
+        var target = args.SelectedItem == (object)_aboutItem     ? typeof(AboutPage)
+                   : args.SelectedItem == (object)_shortcutsItem ? typeof(ShortcutsPage)
+                   : typeof(GeneralPage);
+        if (ContentFrame.Content?.GetType() == target)
         {
             return;
         }
 
         // Drill In: The Old Page Zooms In And Fades Out, The New One Zooms Down To Size And Fades In
-        ContentFrame.Navigate(about ? typeof(AboutPage) : typeof(GeneralPage), Model, new DrillInNavigationTransitionInfo());
+        ContentFrame.Navigate(target, Model, new DrillInNavigationTransitionInfo());
     }
 }

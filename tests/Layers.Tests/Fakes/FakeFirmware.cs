@@ -1,9 +1,10 @@
+using System.Buffers.Binary;
 using Layers.Core.Logic;
 using Layers.Core.Services;
 
 namespace Layers.Tests.Fakes;
 
-/// Simulates the config collection of HID Remapper firmware: 8 slots, GET_CONFIG, GET/APPEND expression, RESUME, monitor flag.
+/// Simulates the config collection of HID Remapper firmware: 8 slots, GET_CONFIG, GET/APPEND expression, RESUME, monitor flag, mappings, macros.
 internal sealed class FakeConfigChannel : IHidChannel
 {
     private readonly Lock _gate = new();
@@ -14,6 +15,9 @@ internal sealed class FakeConfigChannel : IHidChannel
     public (byte Count, byte[] Bytes)[] Slots { get; } = Enumerable.Range(0, 8).Select(_ => ((byte)0, Array.Empty<byte>())).ToArray();
     public int ShortReplies { get; set; }
     public bool CorruptNextReply { get; set; }
+    public List<(uint Source, uint Target, byte LayerMask, byte Flags)> Mappings { get; } = [];
+    public uint[]?[] Macros { get; } = new uint[]?[Protocol.MacroSlots];
+    public byte DescriptorNumber { get; set; }
     public (byte Command, byte[] Reply)? ForeignReply { get; set; }
     private byte _lastCommand;
     private bool _monitorEnabled;
@@ -65,7 +69,19 @@ internal sealed class FakeConfigChannel : IHidChannel
             switch (report[2])
             {
                 case Protocol.CmdGetConfig:
-                    _pending = Replies.Config(Version);
+                    _pending = Replies.Config(Version, (ushort)Mappings.Count, DescriptorNumber);
+                    break;
+                case Protocol.CmdGetMapping:
+                    // Past The Table Is All Zeros, Like Firmware Asked About A Mapping It Doesn't Have
+                    var index = (int)BinaryPrimitives.ReadUInt32LittleEndian(report.AsSpan(3));
+                    var m     = index < Mappings.Count ? Mappings[index] : default;
+                    _pending  = Replies.Mapping(m.Target, m.Source, m.LayerMask, m.Flags);
+                    break;
+                case Protocol.CmdGetMacro:
+                    var macro  = BinaryPrimitives.ReadUInt32LittleEndian(report.AsSpan(3));
+                    var offset = (int)BinaryPrimitives.ReadUInt32LittleEndian(report.AsSpan(7));
+                    var all    = Macros[macro] ?? [];
+                    _pending   = Replies.MacroChunk(all.Skip(offset).Take(Protocol.MacroItemsPerPacket).ToArray());
                     break;
                 case Protocol.CmdGetExpression:
                     var slot = Slots[report[3]];

@@ -34,7 +34,7 @@ public sealed class TrayMenuTests
             expected.Add(detail);
         }
 
-        expected.AddRange(["Layer 0", "---", "Settings…", "---", "Quit"]);
+        expected.AddRange(["Layer 0", "---", "Shortcuts", "Settings…", "---", "Quit"]);
         CollectionAssert.AreEqual(expected, VisibleTexts(host));
 
         // The Status, Detail, And Layer Rows Are Enabled: Normal Text And Hover, With No Action
@@ -45,6 +45,20 @@ public sealed class TrayMenuTests
             .ToList();
         Assert.HasCount(expected.IndexOf("---"), rows);
         Assert.IsTrue(rows.All(row => row.IsEnabled), "a status or layer row is disabled");
+        host.Close();
+    });
+
+    [TestMethod]
+    public Task Shortcuts_RaisesEvent() => UiHost.RunAsync(async () =>
+    {
+        var host   = new TrayMenuHost(new TrayMenuViewModel());
+        var raised = false;
+        host.ShortcutsRequested += (_, _) => raised = true;
+
+        UiTree.Invoke(host.MenuItems.OfType<MenuFlyoutItem>().Single(i => i.Text == "Shortcuts"));
+        await UiHost.Settle();
+
+        Assert.IsTrue(raised);
         host.Close();
     });
 

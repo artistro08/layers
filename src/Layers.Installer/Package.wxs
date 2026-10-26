@@ -33,13 +33,17 @@
             <Files Include="$(PublishDir)**" />
         </ComponentGroup>
 
-        <!-- Third-Party Notice (Solid Layers Icon, MIT) -->
+        <!-- Third-Party Notices (Solid Layers Icon; PowerToys Picker And Web Tool Key Names, MIT) -->
         <Component Id="NoticeFile" Directory="INSTALLFOLDER">
             <File
                 Id="NoticeFluentUi"
                 Source="..\..\assets\NOTICE-fluentui.txt"
                 Name="NOTICE-fluentui.txt"
                 KeyPath="yes" />
+            <File
+                Id="NoticePowerToys"
+                Source="..\..\assets\NOTICE-powertoys.txt"
+                Name="NOTICE-powertoys.txt" />
         </Component>
 
         <!-- Start Menu Shortcut -->

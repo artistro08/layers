@@ -45,6 +45,9 @@ public sealed partial class TrayMenuHost : Window
         WindowStyles.MakeInvisibleHost(this);
     }
 
+    /// <summary>Raised when Shortcuts is clicked.</summary>
+    public event EventHandler? ShortcutsRequested;
+
     /// <summary>Raised when Settings… is clicked.</summary>
     public event EventHandler? SettingsRequested;
 
@@ -103,6 +106,8 @@ public sealed partial class TrayMenuHost : Window
 
     // Closing The Window Closes An Open Menu Too, And A Closed Window Has No AppWindow
     private void Menu_Closed(object sender, object e) => AppWindow?.Hide();
+
+    private void Shortcuts_Click(object sender, RoutedEventArgs e) => ShortcutsRequested?.Invoke(this, EventArgs.Empty);
 
     private void Settings_Click(object sender, RoutedEventArgs e) => SettingsRequested?.Invoke(this, EventArgs.Empty);
 

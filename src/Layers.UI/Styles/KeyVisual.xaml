@@ -1,0 +1,166 @@
+<!--
+    Copyright (c) Microsoft Corporation
+    The Microsoft Corporation licenses this file to you under the MIT license.
+    See the LICENSE file in the project root for more information.
+
+    Ported from PowerToys: src/common/Common.UI.Controls/Controls/KeyVisual/KeyVisual.xaml (https://github.com/microsoft/PowerToys).
+    By way of MagicBuds, whose change is kept: the presenter's content and style come from KeyVisual's
+    PresenterContent and PresenterStyle (AOT).
+-->
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="using:Layers.UI.Controls">
+
+    <!-- Shortcut Sheet Flag Chips: Tap, Hold, And Sticky Each Get Their Own Tint; The Active Layer Badge Is A Stronger Green -->
+    <ResourceDictionary.ThemeDictionaries>
+        <ResourceDictionary x:Key="Default">
+            <SolidColorBrush x:Key="TapChipBackgroundBrush" Color="#333B82F6" />
+            <SolidColorBrush x:Key="TapChipForegroundBrush" Color="#93C5FD" />
+            <SolidColorBrush x:Key="HoldChipBackgroundBrush" Color="#33F59E0B" />
+            <SolidColorBrush x:Key="HoldChipForegroundBrush" Color="#FCD34D" />
+            <SolidColorBrush x:Key="StickyChipBackgroundBrush" Color="#33A855F7" />
+            <SolidColorBrush x:Key="StickyChipForegroundBrush" Color="#D8B4FE" />
+            <SolidColorBrush x:Key="ActiveChipBackgroundBrush" Color="#5922C55E" />
+            <SolidColorBrush x:Key="ActiveChipForegroundBrush" Color="#86EFAC" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="Light">
+            <SolidColorBrush x:Key="TapChipBackgroundBrush" Color="#263B82F6" />
+            <SolidColorBrush x:Key="TapChipForegroundBrush" Color="#1D4ED8" />
+            <SolidColorBrush x:Key="HoldChipBackgroundBrush" Color="#26F59E0B" />
+            <SolidColorBrush x:Key="HoldChipForegroundBrush" Color="#B45309" />
+            <SolidColorBrush x:Key="StickyChipBackgroundBrush" Color="#26A855F7" />
+            <SolidColorBrush x:Key="StickyChipForegroundBrush" Color="#7E22CE" />
+            <SolidColorBrush x:Key="ActiveChipBackgroundBrush" Color="#4D22C55E" />
+            <SolidColorBrush x:Key="ActiveChipForegroundBrush" Color="#166534" />
+        </ResourceDictionary>
+        <ResourceDictionary x:Key="HighContrast">
+            <SolidColorBrush x:Key="TapChipBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="TapChipForegroundBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="HoldChipBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="HoldChipForegroundBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="StickyChipBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
+            <SolidColorBrush x:Key="StickyChipForegroundBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+            <SolidColorBrush x:Key="ActiveChipBackgroundBrush" Color="{ThemeResource SystemColorHighlightColor}" />
+            <SolidColorBrush x:Key="ActiveChipForegroundBrush" Color="{ThemeResource SystemColorHighlightTextColor}" />
+        </ResourceDictionary>
+    </ResourceDictionary.ThemeDictionaries>
+
+    <Style BasedOn="{StaticResource DefaultKeyVisualStyle}" TargetType="controls:KeyVisual" />
+
+    <!-- Default Key Cap -->
+    <Style x:Key="DefaultKeyVisualStyle" TargetType="controls:KeyVisual">
+        <Setter Property="MinWidth" Value="16" />
+        <Setter Property="AutomationProperties.AccessibilityView" Value="Raw" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="MinHeight" Value="16" />
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorSecondaryBrush}" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="{ThemeResource ButtonBorderThemeThickness}" />
+        <Setter Property="Padding" Value="4,4,4,4" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontSize" Value="14" />
+        <Setter Property="CornerRadius" Value="2" />
+        <Setter Property="BackgroundSizing" Value="InnerBorderEdge" />
+        <Setter Property="HorizontalAlignment" Value="Left" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="controls:KeyVisual">
+                    <Grid
+                        x:Name="KeyHolder"
+                        MinWidth="{TemplateBinding MinWidth}"
+                        MinHeight="{TemplateBinding MinHeight}"
+                        HorizontalAlignment="{TemplateBinding HorizontalAlignment}"
+                        VerticalAlignment="{TemplateBinding VerticalAlignment}"
+                        Background="{TemplateBinding Background}"
+                        BackgroundSizing="{TemplateBinding BackgroundSizing}"
+                        BorderBrush="{TemplateBinding BorderBrush}"
+                        BorderThickness="{TemplateBinding BorderThickness}"
+                        CornerRadius="{TemplateBinding CornerRadius}">
+                        <Grid.BackgroundTransition>
+                            <BrushTransition Duration="0:0:0.083" />
+                        </Grid.BackgroundTransition>
+                        <controls:KeyCharPresenter
+                            x:Name="KeyPresenter"
+                            Margin="{TemplateBinding Padding}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                            AutomationProperties.AccessibilityView="Raw"
+                            Content="{TemplateBinding PresenterContent}"
+                            Style="{TemplateBinding PresenterStyle}"
+                            FontSize="{TemplateBinding FontSize}"
+                            FontWeight="{TemplateBinding FontWeight}"
+                            Foreground="{TemplateBinding Foreground}" />
+                        <VisualStateManager.VisualStateGroups>
+                            <VisualStateGroup x:Name="CommonStates">
+                                <VisualState x:Name="Normal" />
+                                <VisualState x:Name="Disabled">
+                                    <VisualState.Setters>
+                                        <Setter Target="KeyHolder.Background" Value="{ThemeResource SubtleFillColorTransparentBrush}" />
+                                        <Setter Target="KeyHolder.BorderBrush" Value="{ThemeResource CardStrokeColorDefaultSolidBrush}" />
+                                        <Setter Target="KeyPresenter.Foreground" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Invalid">
+                                    <VisualState.Setters>
+                                        <Setter Target="KeyHolder.Background" Value="{ThemeResource SystemFillColorCriticalBackgroundBrush}" />
+                                        <Setter Target="KeyHolder.BorderBrush" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+                                        <Setter Target="KeyHolder.BorderThickness" Value="1" />
+                                        <Setter Target="KeyPresenter.Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                                <VisualState x:Name="Warning">
+                                    <VisualState.Setters>
+                                        <Setter Target="KeyHolder.Background" Value="{ThemeResource SystemFillColorCautionBackgroundBrush}" />
+                                        <Setter Target="KeyHolder.BorderBrush" Value="{ThemeResource SystemFillColorCautionBrush}" />
+                                        <Setter Target="KeyHolder.BorderThickness" Value="1" />
+                                        <Setter Target="KeyPresenter.Foreground" Value="{ThemeResource SystemFillColorCautionBrush}" />
+                                    </VisualState.Setters>
+                                </VisualState>
+                            </VisualStateGroup>
+                        </VisualStateManager.VisualStateGroups>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Shortcut Sheet Key: The PowerToys Shortcut Guide's Cap (ShortcutItemView.xaml): Input-Active Fill, Elevation Border,
+         Control Corners, 12 pt Secondary Text, With Room Above And Below The Text -->
+    <Style
+        x:Key="SheetKeyVisualStyle"
+        BasedOn="{StaticResource DefaultKeyVisualStyle}"
+        TargetType="controls:KeyVisual">
+        <Setter Property="Padding" Value="6,5,6,5" />
+        <Setter Property="MinWidth" Value="24" />
+        <Setter Property="Background" Value="{ThemeResource ControlFillColorInputActiveBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource ControlElevationBorderBrush}" />
+        <Setter Property="CornerRadius" Value="{StaticResource ControlCornerRadius}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+    </Style>
+
+    <!-- Shortcut Sheet Mouse And Media Keys: The Same 24 px Cap, With The Glyph A Little Larger Than The Text -->
+    <Style
+        x:Key="SheetIconKeyVisualStyle"
+        BasedOn="{StaticResource SheetKeyVisualStyle}"
+        TargetType="controls:KeyVisual">
+        <Setter Property="Padding" Value="4,0,4,0" />
+        <Setter Property="FontSize" Value="17" />
+    </Style>
+
+    <!-- Key Chip: A Quiet Control Fill, A 1 px Divider Stroke, Radius 4. The Shortcut Sheet Rows And The Picker Use It -->
+    <Style
+        x:Key="KeyChipStyle"
+        BasedOn="{StaticResource DefaultKeyVisualStyle}"
+        TargetType="controls:KeyVisual">
+        <Setter Property="Background" Value="{ThemeResource ControlFillColorSecondaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="4" />
+    </Style>
+</ResourceDictionary>

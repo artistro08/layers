@@ -8,6 +8,7 @@ using Windows.Win32;
 using Windows.Win32.Foundation;
 using Windows.Win32.UI.Shell;
 using Windows.Win32.UI.WindowsAndMessaging;
+using Windows.Graphics;
 
 namespace Layers.UI;
 
@@ -87,14 +88,39 @@ public sealed unsafe class TrayIcon : IDisposable
         Apply(NOTIFY_ICON_MESSAGE.NIM_ADD);
     }
 
-    /// <summary>Raised when the icon is left- or right-clicked.</summary>
+    /// <summary>Raised when the icon is right-clicked.</summary>
     public event EventHandler? MenuRequested;
+
+    /// <summary>Raised when the icon is left-clicked.</summary>
+    public event EventHandler? FlyoutRequested;
+
+    /// <summary>Raised when a hotkey registered on this window fires, with the hotkey ID.</summary>
+    public event EventHandler<int>? HotkeyPressed;
 
     /// <summary>Raised when the hidden window gets <c>WM_CLOSE</c>.</summary>
     public event EventHandler? QuitRequested;
 
     /// <summary>Gets the hidden window handle.</summary>
     public nint Handle => _hwnd;
+
+    /// <summary>
+    /// Finds where the icon sits on screen.
+    /// </summary>
+    /// <remarks>
+    /// Physical pixels. <see langword="null"/> when the shell cannot say, for example while the icon is in the
+    /// overflow menu that is not open.
+    /// </remarks>
+    /// <returns>The icon's rectangle, or <see langword="null"/>.</returns>
+    public RectInt32? GetIconRect()
+    {
+        var id = new NOTIFYICONIDENTIFIER { cbSize = (uint)sizeof(NOTIFYICONIDENTIFIER), hWnd = _hwnd, uID = IconId };
+        if (PInvoke.Shell_NotifyIconGetRect(in id, out var rect).Failed)
+        {
+            return null;
+        }
+
+        return new RectInt32(rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top);
+    }
 
     /// <summary>
     /// Redraws the icon and tooltip for a new device state.
@@ -220,6 +246,12 @@ public sealed unsafe class TrayIcon : IDisposable
                 {
                     case TrayAction.OpenMenu:
                         self.MenuRequested?.Invoke(self, EventArgs.Empty);
+                        return new LRESULT(0);
+                    case TrayAction.OpenFlyout:
+                        self.FlyoutRequested?.Invoke(self, EventArgs.Empty);
+                        return new LRESULT(0);
+                    case TrayAction.Hotkey:
+                        self.HotkeyPressed?.Invoke(self, (int)wParam.Value);
                         return new LRESULT(0);
                     case TrayAction.ReAddIcon:
                         self._added = false;
