@@ -91,7 +91,8 @@ public sealed class WinRtHidChannel(HidDevice device) : IHidChannel
 /// <remarks>
 /// Watches the config collection (usage page 0xFF00, usage 0x20). On open, the monitor collection (usage 0x21) is
 /// matched by <c>System.Devices.ContainerId</c>, which Windows assigns per physical device, so two attached
-/// HID Remappers never cross wires.
+/// HID Remappers never cross wires. The config collection opens through <see cref="Win32HidChannel"/> so it's shared;
+/// the monitor collection opens read-only through WinRT, which already shares.
 /// </remarks>
 public sealed class WinRtHidDeviceSource : IHidDeviceSource
 {
@@ -164,9 +165,17 @@ public sealed class WinRtHidDeviceSource : IHidDeviceSource
     /// <inheritdoc/>
     public async Task<HidDevicePair> OpenAsync(string deviceId, CancellationToken cancellationToken)
     {
-        // Open Config
-        var config = await HidDevice.FromIdAsync(deviceId, FileAccessMode.ReadWrite).AsTask(cancellationToken).ConfigureAwait(false)
-            ?? throw new DeviceProtocolException("config collection could not be opened");
+        // Open Config Shared, So The Web Config Tool And Layers Can Hold It At The Same Time
+        // The WinRT Device ID Of A HID Collection Is Its Win32 Device Path
+        Win32HidChannel config;
+        try
+        {
+            config = new Win32HidChannel(File.OpenHandle(deviceId, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new DeviceProtocolException("config collection could not be opened", ex);
+        }
 
         try
         {
@@ -188,7 +197,7 @@ public sealed class WinRtHidDeviceSource : IHidDeviceSource
             var monitor = await HidDevice.FromIdAsync(monitorInfo.Id, FileAccessMode.Read).AsTask(cancellationToken).ConfigureAwait(false)
                 ?? throw new DeviceProtocolException("monitor collection could not be opened");
 
-            return new HidDevicePair(new WinRtHidChannel(config), new WinRtHidChannel(monitor));
+            return new HidDevicePair(config, new WinRtHidChannel(monitor));
         }
         catch
         {

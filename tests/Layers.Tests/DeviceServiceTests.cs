@@ -51,9 +51,11 @@ public sealed class DeviceServiceTests : IAsyncDisposable
     {
         await ConnectAsync();
 
-        byte[] expected = [3, 21, 21, 21, 21, 21, 21, 21, 21, 20, 11, 22];
+        // Eight Slot Reads, A Confirming Re-Read Of The Chosen Slot, Then Append, Resume, Monitor On
+        byte[] expected = [3, 21, 21, 21, 21, 21, 21, 21, 21, 21, 20, 11, 22];
         CollectionAssert.AreEqual(expected, Config.Commands.ToArray());
-        Assert.AreEqual((byte)0, Config.Sent[9][3], "appends into the first empty slot");
+        Assert.AreEqual((byte)0, Config.Sent[9][3], "re-reads the chosen slot");
+        Assert.AreEqual((byte)0, Config.Sent[10][3], "appends into the first empty slot");
         Assert.IsTrue(Config.MonitorEnabled);
         Assert.AreEqual(new DeviceState(DeviceStatus.Connected, LayerMask.Base), _service.State);
     }
@@ -66,7 +68,8 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         await ConnectAsync(DeviceStatus.VersionMismatch);
         await Eventually.Settle();
 
-        CollectionAssert.AreEqual(new byte[] { 3 }, Config.Commands.ToArray());
+        // GET_CONFIG, Then The Confirming Re-Read, Then Nothing
+        CollectionAssert.AreEqual(new byte[] { 3, 3 }, Config.Commands.ToArray());
     }
 
     [TestMethod]
@@ -90,6 +93,36 @@ public sealed class DeviceServiceTests : IAsyncDisposable
 
         Assert.AreEqual(0, Config.Count(Protocol.CmdAppendToExpression));
         Assert.AreEqual(0, Config.Count(Protocol.CmdResume));
+    }
+
+    [TestMethod]
+    public async Task Connect_ForeignVersionReplyIsReRead()
+    {
+        // The Web Config Tool's Reply Lands In Our GET_CONFIG Read
+        Config.ForeignReply = (Protocol.CmdGetConfig, Replies.Config(19));
+
+        await ConnectAsync();
+
+        Assert.AreEqual(2, Config.Count(Protocol.CmdGetConfig));
+    }
+
+    [TestMethod]
+    public async Task Connect_ForeignEmptySlotReplyNeverAppends()
+    {
+        // A Foreign Reply Makes Full Slot 0 Look Empty On The First Read
+        Config.FillAllSlots();
+        Config.ForeignReply = (Protocol.CmdGetExpression, Replies.Expression(0, []));
+        _source.Arrive();
+
+        // The Confirming Re-Read Catches It And The Session Fails Without Writing
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) >= 9);
+        await Eventually.Settle();
+        Assert.AreEqual(0, Config.Count(Protocol.CmdAppendToExpression));
+
+        // The Retry Reads Honestly
+        _time.Advance(DeviceService.ReconnectDelay);
+        await ConnectAsync(DeviceStatus.NoSlot);
+        Assert.AreEqual(0, Config.Count(Protocol.CmdAppendToExpression));
     }
 
     // =========================================================================
@@ -159,11 +192,50 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         await ConnectAsync();
 
         _time.Advance(DeviceService.VerifyInterval);
-        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 9);
-        _time.Advance(DeviceService.VerifyInterval);
         await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 11);
 
         Assert.AreEqual(1, Config.Count(Protocol.CmdAppendToExpression));
+    }
+
+    [TestMethod]
+    public async Task Reverify_TurnsMonitorBackOnAfterASilentTick()
+    {
+        await ConnectAsync();
+
+        // The Web Config Tool Turns Monitor Off When It Connects; The First Tick Still Trusts The Install
+        Config.MonitorEnabled = false;
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
+        await Eventually.Settle();
+        Assert.IsFalse(Config.MonitorEnabled);
+
+        // A Second Silent Tick Turns It Back On: Slot Read, Then Monitor On, Nothing Else
+        _time.Advance(DeviceService.VerifyInterval);
+        await Eventually.Until(() => Config.MonitorEnabled);
+
+        CollectionAssert.AreEqual(new byte[] { Protocol.CmdGetExpression, Protocol.CmdSetMonitorEnabled }, Config.Commands.TakeLast(2).ToArray());
+        Assert.AreEqual(1, Config.Count(Protocol.CmdAppendToExpression), "re-enabling monitor is not a reinstall");
+    }
+
+    [TestMethod]
+    public async Task Reverify_LeavesMonitorAloneWhileReportsFlow()
+    {
+        await ConnectAsync();
+        Config.MonitorEnabled = false;
+
+        // Reports Arriving Prove Monitor Is On, So No Tick Writes To It
+        for (var tick = 0; tick < 3; tick++)
+        {
+            _source.Monitor.Raise(Replies.Monitor((Protocol.SentinelUsage, 1)));
+            _time.Advance(DeviceService.VerifyInterval);
+            await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10 + tick);
+        }
+
+        await Eventually.Settle();
+        Assert.IsFalse(Config.MonitorEnabled);
+        Assert.AreEqual(1, Config.Count(Protocol.CmdSetMonitorEnabled), "only the install turned monitor on");
     }
 
     [TestMethod]
@@ -182,7 +254,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
 
         await ConnectAsync();
 
-        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 9);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
     }
 
     [TestMethod]
@@ -192,7 +264,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         Config.WipeSlots();
 
         _time.Advance(DeviceService.VerifyInterval);
-        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 9);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
         await Eventually.Settle();
 
         Assert.AreEqual(1, Config.Count(Protocol.CmdAppendToExpression));
@@ -206,7 +278,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         Config.WipeSlots();
 
         _time.Advance(DeviceService.VerifyInterval);
-        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 9);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
         _time.Advance(DeviceService.VerifyInterval);
         await Eventually.Until(() => Config.Count(Protocol.CmdAppendToExpression) == 2);
         await Eventually.Until(() => _service.State.Layers == LayerMask.Base);
@@ -231,7 +303,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
 
         Config.SendFailure = null;
         _time.Advance(DeviceService.VerifyInterval);
-        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) > 8);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) > 9);
         _time.Advance(DeviceService.VerifyInterval);
         await Eventually.Until(() => Config.Count(Protocol.CmdAppendToExpression) == 2);
     }
@@ -403,7 +475,7 @@ public sealed class DeviceServiceTests : IAsyncDisposable
         await ConnectAsync();
         Config.WipeSlots();
         _time.Advance(DeviceService.VerifyInterval);
-        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 9);
+        await Eventually.Until(() => Config.Count(Protocol.CmdGetExpression) == 10);
         _time.Advance(DeviceService.VerifyInterval);
         await Eventually.Until(() => Config.Count(Protocol.CmdAppendToExpression) == 2);
         await _service.DisposeAsync();
