@@ -11,6 +11,9 @@
         <PublishAot>true</PublishAot>
         <SelfContained>true</SelfContained>
         <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+
+        <!-- Tray App With A Small Heap: No Background GC Thread And The Memory It Reserves -->
+        <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     </PropertyGroup>
 
     <!-- Packaging: unpackaged by default, MSIX with -p:WindowsPackageType=MSIX -->

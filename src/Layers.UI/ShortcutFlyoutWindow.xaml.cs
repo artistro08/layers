@@ -5,6 +5,7 @@ using Microsoft.UI.Composition;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Hosting;
+using Microsoft.UI.Xaml.Media;
 using Microsoft.UI.Xaml.Media.Animation;
 using Windows.Graphics;
 using Windows.Win32;
@@ -26,7 +27,8 @@ namespace Layers.UI;
 /// <para>
 /// It hides when it loses focus, like Windows' own flyouts. The click on the tray icon that takes focus away arrives
 /// right after the hide, so a toggle within 300 ms of hiding is ignored. Closing hides; only <see cref="Shutdown"/>
-/// destroys it. Ported from MagicBuds.
+/// destroys it, which the app does once the flyout has been hidden a while. A new window loads its content
+/// invisibly first, and an open asked for before that finishes waits for it. Ported from MagicBuds.
 /// </para>
 /// </remarks>
 public sealed partial class ShortcutFlyoutWindow : Window
@@ -46,6 +48,9 @@ public sealed partial class ShortcutFlyoutWindow : Window
     private long _lastHiddenAt;
     private bool _shuttingDown;
     private bool _isOpen;
+    private bool _warming;
+    private RectInt32? _pendingRect;
+    private int _framesBeforeReveal;
     private TaskbarEdge _edge;
     private HWND _returnTo;
     private (int Left, int Top, int Right, int Bottom) _clip;
@@ -91,7 +96,7 @@ public sealed partial class ShortcutFlyoutWindow : Window
 
         // Live Resize: The Panel's Height Animates To The Content's, The Region Follows The Panel
         View.SizeChanged         += (_, _) => ResizePanel(animate: _isOpen);
-        WindowRoot.LayoutUpdated += (_, _) => ClipToPanel();
+        WindowRoot.LayoutUpdated += WindowRoot_LayoutUpdated;
 
         // Closing Hides; Losing Focus Hides
         AppWindow.Closing += (_, e) =>
@@ -102,17 +107,20 @@ public sealed partial class ShortcutFlyoutWindow : Window
                 HideFlyout();
             }
         };
-        Activated += (_, e) =>
-        {
-            if (e.WindowActivationState == WindowActivationState.Deactivated && _isOpen)
-            {
-                HideFlyout();
-            }
-        };
+        Activated += Window_Activated;
+
+        // Warm Up: Show Once With An Empty Region (Nothing Draws), So XAML Loads Before The First Open Instead Of During It
+        _warming = true;
+        _ = PInvoke.SetWindowRgn(_hwnd, PInvoke.CreateRectRgn(0, 0, 0, 0), false);
+        WindowRoot.Loaded += WarmedUp;
+        AppWindow.Show(false);
     }
 
     /// <summary>Raised when the flyout has been asked to show.</summary>
     public event EventHandler? Opened;
+
+    /// <summary>Raised when the panel has slid out and the window is hidden, so the app can release it.</summary>
+    public event EventHandler? Hidden;
 
     /// <summary>Raised by Esc.</summary>
     public event EventHandler? CloseRequested;
@@ -127,6 +135,9 @@ public sealed partial class ShortcutFlyoutWindow : Window
     public bool IsOpen => _isOpen;
 
     internal ShortcutSheetView View { get; }
+
+    // Still Loading Its Content Invisibly (Tests Check They Hit This Window)
+    internal bool IsLoading => _warming;
 
     /// <summary>
     /// Opens the flyout if it isn't already.
@@ -183,6 +194,12 @@ public sealed partial class ShortcutFlyoutWindow : Window
         _isOpen       = false;
         _lastHiddenAt = Environment.TickCount64;
 
+        // Closed Before It Finished Loading: Nothing Was Shown, So Nothing Slides
+        if (_warming)
+        {
+            return;
+        }
+
         // Back To The Window That Had The Keyboard, If It Still Exists; Else The Taskbar
         if (PInvoke.GetForegroundWindow() == _hwnd)
         {
@@ -205,12 +222,40 @@ public sealed partial class ShortcutFlyoutWindow : Window
         _shuttingDown = true;
         _isOpen       = false;
         _slide        = null;
+
+        // A Window Still Handling Its Own Activated, Or XAML's App-Wide LayoutUpdated, Is Never Freed After Closing
+        Activated                   -= Window_Activated;
+        WindowRoot.Loaded           -= WarmedUp;
+        WindowRoot.LayoutUpdated    -= WindowRoot_LayoutUpdated;
+        CompositionTarget.Rendering -= Reveal_Rendering;
+        View.Detach();
         Close();
     }
 
     // =========================================================================
     // SHOW
     // =========================================================================
+
+    // Loaded: Open If An Open Was Asked For Meanwhile, Else Hide Until One Is
+    private void WarmedUp(object sender, RoutedEventArgs e)
+    {
+        WindowRoot.Loaded -= WarmedUp;
+        _warming           = false;
+        if (_shuttingDown)
+        {
+            return;
+        }
+
+        AppWindow.Hide();
+        if (_isOpen)
+        {
+            ShowFlyout(_pendingRect);
+            return;
+        }
+
+        // Closed Again While Loading (A Quick Double Toggle): Hidden Lets The App Release It Like Any Other Close
+        Hidden?.Invoke(this, EventArgs.Empty);
+    }
 
     private void ShowFlyout(RectInt32? iconRect)
     {
@@ -220,9 +265,23 @@ public sealed partial class ShortcutFlyoutWindow : Window
         var front = PInvoke.GetForegroundWindow();
         _returnTo = front == _hwnd ? _returnTo : front;
 
-        // Still Sliding Out From A Close That Hasn't Finished: Turn Around From Where It Is
-        if (!AppWindow.IsVisible)
+        // Not Loaded Yet: WarmedUp Opens It Once It Is, So The First Frame Shown Is Already Laid Out
+        // Moved To Its Final Place Now (Still Invisible Behind Its Empty Region), So That First Layout Is At The Final
+        // Size: Otherwise The Region Is Cut From The Default Size And Grows Once Shown, Which Flashes White
+        if (_warming)
         {
+            _pendingRect = iconRect;
+            MoveToPlace(iconRect);
+            return;
+        }
+
+        // Hidden: Place It And Show It Cloaked, Then Reveal And Slide In Once XAML Has Drawn It There, Since A Window
+        // Shown Before Its First Frame At A New Size Flashes White Over Its Whole Region For A Refresh
+        // Still Visible (Sliding Out From A Close That Hasn't Finished): Turn Around From Where It Is
+        var hidden = !AppWindow.IsVisible;
+        if (hidden)
+        {
+            Cloak(true);
             PlaceWindow(iconRect);
             _slideVisual.Properties.InsertVector3("Translation", HiddenOffset());
             AppWindow.Show(true);
@@ -230,14 +289,72 @@ public sealed partial class ShortcutFlyoutWindow : Window
 
         Activate();
         PInvoke.SetForegroundWindow(_hwnd);
-        Slide(Vector3.Zero, EnterDuration, new Vector2(0, 0), new Vector2(0, 1));
+        if (hidden)
+        {
+            RevealAfterFirstFrames();
+        }
+        else
+        {
+            SlideIn();
+        }
+
         View.FocusList();
         Opened?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void SlideIn() => Slide(Vector3.Zero, EnterDuration, new Vector2(0, 0), new Vector2(0, 1));
+
+    // Two Rendering Ticks: The First Draws The Placed Window, The Second Comes Once That Frame Is Out
+    private void RevealAfterFirstFrames()
+    {
+        _framesBeforeReveal = 2;
+        CompositionTarget.Rendering -= Reveal_Rendering;
+        CompositionTarget.Rendering += Reveal_Rendering;
+    }
+
+    private void Reveal_Rendering(object? sender, object e)
+    {
+        if (--_framesBeforeReveal > 0)
+        {
+            return;
+        }
+
+        // Rendering Is App-Wide, So Leaving It Hooked Would Keep This Window Alive And Redrawing Every Frame
+        CompositionTarget.Rendering -= Reveal_Rendering;
+        if (_shuttingDown)
+        {
+            return;
+        }
+
+        Cloak(false);
+        if (_isOpen)
+        {
+            SlideIn();
+        }
+    }
+
+    // A Cloaked Window Is Shown And Drawn As Usual, But The Compositor Leaves It Off Screen
+    private unsafe void Cloak(bool cloaked)
+    {
+        BOOL value = cloaked;
+        _ = PInvoke.DwmSetWindowAttribute(_hwnd, Windows.Win32.Graphics.Dwm.DWMWINDOWATTRIBUTE.DWMWA_CLOAK, &value, (uint)sizeof(BOOL));
     }
 
     // Window = The Tallest The Flyout May Get, One Margin Wider Than The Panel, Flush On The Taskbar Edge. The Panel
     // Sits Against The Taskbar Side And Is Only As Tall As Its Content, So It Grows And Shrinks Live.
     private void PlaceWindow(RectInt32? iconRect)
+    {
+        MoveToPlace(iconRect);
+
+        WindowRoot.UpdateLayout();
+        ResizePanel(animate: false);
+        WindowRoot.UpdateLayout();
+        _clip = default;
+        ClipToPanel();
+    }
+
+    // Taskbar Edge, Panel Side, And Window Bounds On The Monitor With The Icon (Or The Cursor)
+    private void MoveToPlace(RectInt32? iconRect)
     {
         var (monitor, workArea, scale) = ScreenGeometry.MonitorFor(iconRect);
         var panel  = FlyoutPlacement.Calculate(monitor, workArea, scale, TallestDip);
@@ -250,12 +367,6 @@ public sealed partial class ShortcutFlyoutWindow : Window
         var bounds = new RectInt32(panel.Left - margin, panel.Top - margin, panel.Width + (2 * margin), panel.Height + (2 * margin));
         AppWindow.MoveAndResize(bounds);
         AppWindow.MoveAndResize(bounds);
-
-        WindowRoot.UpdateLayout();
-        ResizePanel(animate: false);
-        WindowRoot.UpdateLayout();
-        _clip = default;
-        ClipToPanel();
     }
 
     // Panel Height = Content Height Plus Its Border, Capped At What The Window Allows. The View Gets The Cap As Its
@@ -318,11 +429,22 @@ public sealed partial class ShortcutFlyoutWindow : Window
         };
     }
 
+    private void WindowRoot_LayoutUpdated(object? sender, object e) => ClipToPanel();
+
+    private void Window_Activated(object sender, WindowActivatedEventArgs e)
+    {
+        if (e.WindowActivationState == WindowActivationState.Deactivated && _isOpen)
+        {
+            HideFlyout();
+        }
+    }
+
     // Window Region = The Panel Plus Its Margin (Room For The Shadow), Stretched To The Taskbar Edge So The Slide
     // Still Shows. Everything Else Doesn't Draw And Lets Clicks Through.
     private void ClipToPanel()
     {
-        if (WindowRoot.XamlRoot is not { } root)
+        // While Loading, The Window Is On Screen With An Empty Region; Opening That Up Flashes It White, So It Waits
+        if (_warming || WindowRoot.XamlRoot is not { } root)
         {
             return;
         }
@@ -372,6 +494,7 @@ public sealed partial class ShortcutFlyoutWindow : Window
             if (_slide == slide && !_isOpen && !_shuttingDown)
             {
                 AppWindow.Hide();
+                Hidden?.Invoke(this, EventArgs.Empty);
             }
         };
     }

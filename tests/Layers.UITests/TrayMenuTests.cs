@@ -24,7 +24,6 @@ public sealed class TrayMenuTests
         var model = new TrayMenuViewModel { State = new DeviceState(status, LayerMask.Base) };
         var host  = new TrayMenuHost(model);
 
-        host.RefreshBindings();
         await UiHost.Settle();
 
         // Status, Optional Detail, Layer, Then The Fixed Rows
@@ -67,13 +66,28 @@ public sealed class TrayMenuTests
     {
         var model = new TrayMenuViewModel();
         var host  = new TrayMenuHost(model);
-        host.RefreshBindings();
 
         model.State = new DeviceState(DeviceStatus.Connected, new LayerMask(0b1010));
         await UiHost.Settle();
 
         CollectionAssert.Contains(VisibleTexts(host), "Layers 1, 3");
         CollectionAssert.Contains(VisibleTexts(host), "Connected");
+        host.Close();
+    });
+
+    [TestMethod]
+    public Task ShowAtCursor_RightAfterCreating_Opens() => UiHost.RunAsync(async () =>
+    {
+        // The App Makes A Fresh Host On Each Right-Click And Opens It At Once, Before It Has Loaded
+        var host = new TrayMenuHost(new TrayMenuViewModel());
+
+        host.ShowAtCursor();
+        for (var i = 0; i < 50 && !host.IsMenuOpen; i++)
+        {
+            await UiHost.Settle();
+        }
+
+        Assert.IsTrue(host.IsMenuOpen, "the menu of a new host never opened");
         host.Close();
     });
 }

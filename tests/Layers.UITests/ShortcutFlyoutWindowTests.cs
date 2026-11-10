@@ -51,6 +51,33 @@ public sealed class ShortcutFlyoutWindowTests
     });
 
     [TestMethod]
+    public Task ToggleTwice_WhileLoading_StillRaisesHidden() => UiHost.RunAsync(async () =>
+    {
+        // A Quick Double Toggle On A New Window Closes It Before It Loads; The App Only Releases It On Hidden
+        var window = new ShortcutFlyoutWindow(new ShortcutSheetViewModel());
+        var hidden = 0;
+        window.Hidden += (_, _) => hidden++;
+        Assert.IsTrue(window.IsLoading, "the window loaded before the toggles, so this test can't hit the loading path");
+
+        window.Toggle(null);
+        if (!window.IsLoading)
+        {
+            window.Shutdown();
+            Assert.Inconclusive("moving the window finished loading it, so the second toggle can't land mid-load");
+        }
+
+        window.Toggle(null);
+        for (var i = 0; i < 50 && hidden == 0; i++)
+        {
+            await UiHost.Settle();
+        }
+
+        Assert.AreEqual(1, hidden, "a flyout closed while loading never raised Hidden");
+        Assert.IsFalse(window.IsOpen);
+        window.Shutdown();
+    });
+
+    [TestMethod]
     public Task Window_IsBorderlessPopupNotInSwitcher() => UiHost.RunAsync(async () =>
     {
         var window = new ShortcutFlyoutWindow(new ShortcutSheetViewModel());
@@ -74,6 +101,7 @@ public sealed class ShortcutFlyoutWindowTests
         editor.Activate();
         await UiHost.Settle();
         var editorHwnd = new Windows.Win32.Foundation.HWND(WinRT.Interop.WindowNative.GetWindowHandle(editor));
+        TakeForegroundRight();
         Windows.Win32.PInvoke.SetForegroundWindow(editorHwnd);
         await UiHost.Settle();
         if (Windows.Win32.PInvoke.GetForegroundWindow() != editorHwnd)
@@ -94,6 +122,21 @@ public sealed class ShortcutFlyoutWindowTests
         window.Shutdown();
         editor.Close();
     });
+
+    // Windows Only Lets The Process That Got The Last Input Take The Foreground, And Earlier Tests' Windows Leave This
+    // One Without It. A Press And Release Of An Unassigned Key (0xE8) Earns It Back Without Typing Anything.
+    private static unsafe void TakeForegroundRight()
+    {
+        var inputs = stackalloc Windows.Win32.UI.Input.KeyboardAndMouse.INPUT[2];
+        for (var i = 0; i < 2; i++)
+        {
+            inputs[i].type             = Windows.Win32.UI.Input.KeyboardAndMouse.INPUT_TYPE.INPUT_KEYBOARD;
+            inputs[i].Anonymous.ki.wVk =(Windows.Win32.UI.Input.KeyboardAndMouse.VIRTUAL_KEY)0xE8;
+        }
+
+        inputs[1].Anonymous.ki.dwFlags = Windows.Win32.UI.Input.KeyboardAndMouse.KEYBD_EVENT_FLAGS.KEYEVENTF_KEYUP;
+        _ = Windows.Win32.PInvoke.SendInput(new Span<Windows.Win32.UI.Input.KeyboardAndMouse.INPUT>(inputs, 2), sizeof(Windows.Win32.UI.Input.KeyboardAndMouse.INPUT));
+    }
 
     [TestMethod]
     public Task ViewEvents_AreReRaised() => UiHost.RunAsync(async () =>

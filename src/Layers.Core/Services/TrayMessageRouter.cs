@@ -38,7 +38,8 @@ public enum TrayAction
 /// <remarks>
 /// Kept pure so it's testable without a window. A left button-up on the icon toggles the shortcut sheet and a right
 /// button-up opens the menu. <c>WM_HOTKEY</c> is the global shortcut. <c>TaskbarCreated</c> means Explorer restarted. <c>WM_SETTINGCHANGE</c> (including
-/// "ImmersiveColorSet" for the taskbar theme) and <c>WM_DPICHANGED</c> redraw the icon. <c>WM_CLOSE</c> quits, so the
+/// "ImmersiveColorSet" for the taskbar theme) and <c>WM_DPICHANGED</c> redraw the icon, as does <c>WM_TIMER</c>, the
+/// retry after the shell refused the icon. <c>WM_CLOSE</c> quits, so the
 /// MSI's <c>CloseApplication</c> can close the app cleanly before replacing files.
 /// </remarks>
 public static class TrayMessageRouter
@@ -87,7 +88,7 @@ public static class TrayMessageRouter
             return TrayAction.Quit;
         }
 
-        // Theme And DPI
-        return message is PInvoke.WM_SETTINGCHANGE or PInvoke.WM_DPICHANGED ? TrayAction.Refresh : TrayAction.None;
+        // Theme And DPI, And The Retry Timer After A Failed Add (The Tray Window's Only Timer, So Any WM_TIMER Is It)
+        return message is PInvoke.WM_SETTINGCHANGE or PInvoke.WM_DPICHANGED or PInvoke.WM_TIMER ? TrayAction.Refresh : TrayAction.None;
     }
 }

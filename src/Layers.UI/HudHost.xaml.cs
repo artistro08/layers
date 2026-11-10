@@ -35,12 +35,14 @@ public sealed partial class HudHost : Window
     private readonly HudLifecycle _lifecycle = new();
     private HudMonitorMode _monitor;
     private bool _windowClosed;
+    private bool _waitingForLoad;
 
     /// <summary>
     /// Creates the hidden HUD host.
     /// </summary>
     /// <remarks>
-    /// Created once at startup and reused for every change.
+    /// Created on the first layer change, reused while changes keep coming, and closed by the app once it has been
+    /// hidden a while.
     /// </remarks>
     public HudHost()
     {
@@ -65,13 +67,15 @@ public sealed partial class HudHost : Window
         // Hold Timer, Stopped With The Window, Which Also Ends All HUD Work
         _hold             = DispatcherQueue.CreateTimer();
         _hold.IsRepeating = false;
-        _hold.Tick       += (_, _) => Hold_Tick();
-        Closed           += (_, _) =>
-        {
-            _windowClosed = true;
-            _hold.Stop();
-        };
+        _hold.Tick       += Hold_Tick;
+        Closed           += Window_Closed;
     }
+
+    /// <summary>Raised when the HUD has finished hiding, so the app can release it.</summary>
+    public event EventHandler? Hidden;
+
+    /// <summary>Gets a value indicating whether the HUD is on screen or about to be.</summary>
+    public bool IsShown => !_windowClosed && (Hud.IsOpen || AppWindow.IsVisible);
 
     /// <summary>Gets the shown label.</summary>
     /// <remarks>
@@ -133,6 +137,18 @@ public sealed partial class HudHost : Window
         AppWindow.Show(false);
         WindowStyles.BringToTopmost(_hwnd);
 
+        // A Flyout Asked To Open Before Its New Window Has Loaded Silently Doesn't, So A Fresh Host Opens On Load
+        if (!Root.IsLoaded)
+        {
+            if (!_waitingForLoad)
+            {
+                _waitingForLoad = true;
+                Root.Loaded    += Root_Loaded;
+            }
+
+            return;
+        }
+
         // Mixed-DPI Guard: The DIP Math Below Assumes The Moves Left The Host At The Monitor's Scale
         // Only Traced, Not Used: RasterizationScale Can Lag A Move Until XAML Handles The DPI Change, So The Monitor's
         // Scale Stays The Source Of Truth, And A Mismatch Here May Be That Lag Rather Than A Wrong Placement
@@ -160,12 +176,19 @@ public sealed partial class HudHost : Window
         _hold.Start();
     }
 
-    private void Hold_Tick()
+    private void Hold_Tick(DispatcherQueueTimer sender, object args)
     {
+        // A New Host Still Loading Hasn't Opened Yet; Its Open Restarts The Hold, So The Full Duration Still Shows
+        if (_waitingForLoad)
+        {
+            return;
+        }
+
         // The Open Failed Silently, So Reset Instead Of Animating Unloaded Content
         if (_lifecycle.Lost(Hud.IsOpen))
         {
             AppWindow.Hide();
+            Hidden?.Invoke(this, EventArgs.Empty);
             return;
         }
 
@@ -179,7 +202,7 @@ public sealed partial class HudHost : Window
         Exit.Begin();
     }
 
-    private void Exit_Completed(object sender, object e)
+    private void Exit_Completed(object? sender, object e)
     {
         // Nothing To Hide After Quit
         // Ignore A Completion Queued Before A Show Stopped The Exit, Or It Would Hide The HUD That Show Brought Back.
@@ -196,9 +219,29 @@ public sealed partial class HudHost : Window
         }
     }
 
-    private void Hud_Opened(object sender, object e) => _lifecycle.Opened();
+    private void Hud_Opened(object? sender, object e) => _lifecycle.Opened();
 
-    private void Hud_Closed(object sender, object e)
+    private void Root_Loaded(object sender, RoutedEventArgs e)
+    {
+        Root.Loaded    -= Root_Loaded;
+        _waitingForLoad = false;
+        Open();
+    }
+
+    // A Window Still Handling Its Own, Its Flyout's, Or Its Timer's Events Is Never Freed, So Closing Unhooks Them All
+    private void Window_Closed(object sender, WindowEventArgs args)
+    {
+        Closed         -= Window_Closed;
+        Root.Loaded    -= Root_Loaded;
+        Hud.Opened     -= Hud_Opened;
+        Hud.Closed     -= Hud_Closed;
+        Exit.Completed -= Exit_Completed;
+        _hold.Tick     -= Hold_Tick;
+        _windowClosed   = true;
+        _hold.Stop();
+    }
+
+    private void Hud_Closed(object? sender, object e)
     {
         // Closing The Window Closes The Flyout Too, And A Closed Window Has No AppWindow To Hide Or Reopen In
         if (_windowClosed)
@@ -213,5 +256,6 @@ public sealed partial class HudHost : Window
         }
 
         AppWindow.Hide();
+        Hidden?.Invoke(this, EventArgs.Empty);
     }
 }

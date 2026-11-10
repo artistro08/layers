@@ -17,34 +17,30 @@
                 <!-- Status Row -->
                 <MenuFlyoutItem
                     x:Name="StatusItem"
-                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
-                    Text="{x:Bind Model.StatusLabel, Mode=OneWay}">
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}">
                     <MenuFlyoutItem.Icon>
                         <PathIcon
+                            x:Name="StatusDot"
                             Width="16"
                             Height="16"
-                            Data="M 4,8 A 4,4 0 1 1 12,8 A 4,4 0 1 1 4,8 Z"
-                            Foreground="{x:Bind local:TrayMenuHost.ToneBrush(Model.Tone), Mode=OneWay}" />
+                            Data="M 4,8 A 4,4 0 1 1 12,8 A 4,4 0 1 1 4,8 Z" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
 
                 <!-- Status Detail Row -->
                 <MenuFlyoutItem
                     x:Name="DetailItem"
-                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
-                    Text="{x:Bind Model.StatusDetail, Mode=OneWay}"
-                    Visibility="{x:Bind Model.HasStatusDetail, Mode=OneWay}" />
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}" />
 
                 <!-- Layer Row -->
                 <MenuFlyoutItem
                     x:Name="LayerItem"
-                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}"
-                    Text="{x:Bind Model.LayerLabel, Mode=OneWay}">
+                    Padding="{ThemeResource MenuFlyoutItemThemePaddingNarrow}">
                     <MenuFlyoutItem.Icon>
                         <PathIcon
+                            x:Name="LayerIcon"
                             Width="16"
-                            Height="16"
-                            Data="{x:Bind local:Glyphs.Layers(16)}" />
+                            Height="16" />
                     </MenuFlyoutItem.Icon>
                 </MenuFlyoutItem>
 
