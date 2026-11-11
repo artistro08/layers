@@ -25,7 +25,7 @@ public sealed class HudHostTests
     private static bool IsOpen(HudHost hud) => OpenPopups(hud).Count > 0;
 
     /// Creates the host and waits for its XAML root, which only exists once the dispatcher has run.
-    /// In the app the host is created at startup, long before the first show.
+    /// Show_RightAfterCreating_Opens covers a show before that, as the app does on the first layer change.
     private static async Task<HudHost> NewHud()
     {
         var hud = new HudHost();
@@ -37,6 +37,43 @@ public sealed class HudHostTests
         Assert.IsNotNull(hud.Content.XamlRoot, "host never got a XAML root");
         return hud;
     }
+
+    [TestMethod]
+    public Task Show_RightAfterCreating_Opens() => UiHost.RunAsync(async () =>
+    {
+        // The App Makes The Host On The First Layer Change And Shows It At Once, Before It Has Loaded
+        var hud = new HudHost();
+
+        hud.Show(new LayerMask(0b10), LongHold);
+        for (var i = 0; i < 50 && (hud.Content.XamlRoot is null || !IsOpen(hud)); i++)
+        {
+            await UiHost.Settle();
+        }
+
+        Assert.IsTrue(hud.Content.XamlRoot is not null && IsOpen(hud), "the first show of a new host never opened");
+        hud.Close();
+    });
+
+    [TestMethod]
+    public Task Show_HoldShorterThanLoad_StillOpensThenClosesAndHides() => UiHost.RunAsync(async () =>
+    {
+        // A Hold That Ends Before The New Host Loads Must Not Hide It Before It Ever Showed
+        var hud    = new HudHost();
+        var hidden = 0;
+        hud.Hidden += (_, _) => hidden++;
+
+        hud.Show(new LayerMask(0b10), TimeSpan.FromMilliseconds(1));
+        for (var i = 0; i < 100 && hidden == 0; i++)
+        {
+            await Task.Delay(20);
+        }
+
+        // Long Enough For A Late Open, Its Hold, And Its Exit To Have Run: One Open, So One Hide
+        await Task.Delay(HudTiming.Exit + TimeSpan.FromMilliseconds(Margin * 2));
+        Assert.AreEqual(1, hidden, "hid before it opened, then again after a late open");
+        Assert.IsFalse(hud.IsShown, "still on screen after hiding");
+        hud.Close();
+    });
 
     [TestMethod]
     public Task Show_OpensFlyoutWithLabel() => UiHost.RunAsync(async () =>

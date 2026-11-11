@@ -347,6 +347,12 @@ public sealed partial class SettingsWindow : Window
         (ContentFrame.Content as ShortcutsPage)?.CloseDialogs();
         Current = null;
 
+        // A Window Still Handling Its Own Events, Or Its Elements' Events Hooked Up In XAML, Is Never Freed
+        Closed                          -= Window_Closed;
+        AppTitleBar.PaneToggleRequested -= AppTitleBar_PaneToggleRequested;
+        MinimizeButton.Click            -= MinimizeButton_Click;
+        CloseButton.Click               -= CloseButton_Click;
+        Nav.SelectionChanged            -= Nav_SelectionChanged;
         CaptionButtons.SizeChanged -= CaptionButtons_SizeChanged;
         SizeChanged                -= Window_SizeChanged;
         Root.Loaded                -= Root_Loaded;

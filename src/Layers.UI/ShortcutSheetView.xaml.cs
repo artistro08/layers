@@ -40,7 +40,7 @@ public sealed partial class ShortcutSheetView : UserControl
     /// Creates the view.
     /// </summary>
     /// <remarks>
-    /// The view follows <paramref name="model"/> for as long as it lives.
+    /// The view follows <paramref name="model"/> until its window closes and calls <see cref="Detach"/>.
     /// </remarks>
     /// <param name="model">The sheet's view model.</param>
     public ShortcutSheetView(ShortcutSheetViewModel model)
@@ -78,6 +78,13 @@ public sealed partial class ShortcutSheetView : UserControl
     public void RequestClose() => CloseRequested?.Invoke(this, EventArgs.Empty);
 
     internal void FocusList() => SearchBox.Focus(FocusState.Programmatic);
+
+    // The View Model Outlives The View, So A Closing Window Unhooks Both Paths Or It Stays In Memory
+    internal void Detach()
+    {
+        Model.PropertyChanged -= Model_PropertyChanged;
+        Bindings.StopTracking();
+    }
 
     // =========================================================================
     // SECTIONS

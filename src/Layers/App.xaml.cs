@@ -16,7 +16,10 @@ namespace Layers;
 /// </summary>
 /// <remarks>
 /// Only Quit (or <c>WM_CLOSE</c> from the installer) ends the process. Closing a window never does, because
-/// <see cref="DispatcherShutdownMode"/> is explicit.
+/// <see cref="DispatcherShutdownMode"/> is explicit. At rest the app is just the tray icon and the device link: the
+/// tray menu, shortcut sheet, HUD, and Settings are each made when first needed and closed again when done (the menu
+/// at once, the sheet and HUD after 30 s hidden, so a quick reopen stays instant), then <see cref="MemoryTrim"/>
+/// hands the freed memory back to Windows.
 /// </remarks>
 #pragma warning disable CA1515 // The XAML compiler generates App as public, so both halves must be public
 #pragma warning disable CA1001 // App lives as long as the process; QuitAsync releases the tray icon and device link
@@ -24,7 +27,11 @@ public sealed partial class App : Application
 #pragma warning restore CA1001
 #pragma warning restore CA1515
 {
+    // How Long A Hidden Flyout Or HUD Stays Around For A Quick Reopen Before It's Closed And Memory Is Trimmed
+    private static readonly TimeSpan IdleDelay = TimeSpan.FromSeconds(30);
+
     private DispatcherQueue _dispatcher = null!;
+    private DispatcherQueueTimer _trimTimer = null!;
     private readonly TrayMenuViewModel _menuModel = new();
     private readonly ShortcutSheetViewModel _sheetModel = new();
     private TrayIcon? _tray;
@@ -55,65 +62,39 @@ public sealed partial class App : Application
     {
         try
         {
-            // UI Thread Dispatcher
+            // UI Thread Dispatcher And Memory Trim
             _dispatcher = DispatcherQueue.GetForCurrentThread();
+            _trimTimer  = _dispatcher.CreateTimer();
+            _trimTimer.IsRepeating = false;
+            _trimTimer.Tick       += (_, _) =>
+            {
+                if (ReleaseIdleWindows())
+                {
+                    MemoryTrim.Run();
+                }
+            };
 
-            // Settings And HUD
+            // Settings
             _hudSettings = _store.Load();
-            _hud         = new HudHost();
 
             // Start At Sign-In, Per Packaging
             _startup = AppPackaging.IsPackaged
                 ? new PackagedStartupTask()
                 : new RunKeyStartup(Environment.ProcessPath!);
 
-            // taskkill Sends WM_CLOSE Only To The Front Window, Which Is The HUD Host Once It Has Shown
-            // So Closing It Quits
-            _hud.Closed += (_, _) =>
-            {
-                _hud = null;
-                _ = QuitAsync();
-            };
-
-            // Tray Icon
-            _tray = new TrayIcon();
+            // Tray Icon: Its Hidden Window Also Gets taskkill's And The Installer's WM_CLOSE, Which Quits
+            _tray = new TrayIcon(AppPackaging.IsPackaged);
             _tray.QuitRequested += (_, _) => _ = QuitAsync();
-
-            // Tray Menu
-            _menu = new TrayMenuHost(_menuModel);
-            _menu.QuitRequested     += (_, _) => _ = QuitAsync();
-            _menu.SettingsRequested += (_, _) => OpenSettings();
-            _tray.MenuRequested += (_, _) => _menu?.ShowAtCursor();
-
-            // taskkill And The Installer Send WM_CLOSE To The Host Window, So Closing It Quits
-            _menu.Closed += (_, _) =>
-            {
-                _menu = null;
-                _ = QuitAsync();
-            };
+            _tray.MenuRequested += (_, _) => ShowMenu();
 
             // Shortcut Sheet: Tray Left-Click, The Menu Item, And The Hotkey Toggle It
-            _sheetModel.Meanings = _store.LoadMeanings();
-            _flyout = new ShortcutFlyoutWindow(_sheetModel);
-            _flyout.CloseRequested    += (_, _) => _flyout?.HideFlyout();
-            _flyout.SettingsRequested += (_, _) =>
-            {
-                _flyout?.HideFlyout();
-                OpenSettings();
-            };
-            _flyout.EditRequested += (_, _) =>
-            {
-                _flyout?.HideFlyout();
-                _ = Windows.System.Launcher.LaunchUriAsync(_store.LoadEditorUrl());
-            };
-            _flyout.Opened += (_, _) => RequestSheetRefresh();
-            _tray.FlyoutRequested     += (_, _) => _flyout?.Toggle(_tray?.GetIconRect());
-            _menu.ShortcutsRequested  += (_, _) => _flyout?.Open(_tray?.GetIconRect());
-            _tray.HotkeyPressed       += (_, id) =>
+            _sheetModel.Meanings   = _store.LoadMeanings();
+            _tray.FlyoutRequested += (_, _) => Flyout()?.Toggle(_tray?.GetIconRect());
+            _tray.HotkeyPressed   += (_, id) =>
             {
                 if (id == GlobalHotkey.Id)
                 {
-                    _flyout?.Toggle(Windhawk.HasTrayOnEveryTaskbar() ? null : _tray?.GetIconRect());
+                    Flyout()?.Toggle(Windhawk.HasTrayOnEveryTaskbar() ? null : _tray?.GetIconRect());
                 }
             };
 
@@ -127,6 +108,9 @@ public sealed partial class App : Application
             _device.StateChanged  += (_, state) => _dispatcher.TryEnqueue(() => OnDeviceState(state));
             _device.ConfigChanged += (_, config) => _dispatcher.TryEnqueue(() => OnDeviceConfig(config));
             _device.Start();
+
+            // First Trim Once Startup And The Device Link Have Settled
+            ScheduleTrim();
         }
 #pragma warning disable CA1031 // Any startup failure is shown to the user, then the app exits
         catch (Exception ex)
@@ -146,13 +130,167 @@ public sealed partial class App : Application
         _lastState   = state;
         if (HudRules.ShouldShow(_hudSettings, previous, state))
         {
-            _hud?.Show(state.Layers, _hudSettings.Hold, _hudSettings.HudMonitor);
+            Hud()?.Show(state.Layers, _hudSettings.Hold, _hudSettings.HudMonitor);
         }
 
         // Update Tray, Menu, And Sheet
         _menuModel.State  = state;
         _sheetModel.State = state;
         _tray?.Update(state);
+    }
+
+    // =========================================================================
+    // WINDOWS, MADE WHEN NEEDED
+    // =========================================================================
+
+    // Opens The Tray Menu In A Fresh Host, Closed Again As Soon As The Menu Closes
+    private void ShowMenu()
+    {
+        if (_quitting)
+        {
+            return;
+        }
+
+        if (_menu is null)
+        {
+            var menu = new TrayMenuHost(_menuModel);
+            menu.QuitRequested      += (_, _) => _ = QuitAsync();
+            menu.SettingsRequested  += (_, _) => OpenSettings();
+            menu.ShortcutsRequested += (_, _) => Flyout()?.Open(_tray?.GetIconRect());
+
+            // Closed After The Click That Closed The Menu Has Finished, Unless A New Right-Click Reopened It
+            menu.MenuClosed += (_, _) => _dispatcher.TryEnqueue(() =>
+            {
+                if (ReferenceEquals(_menu, menu) && !menu.IsMenuOpen)
+                {
+                    _menu = null;
+                    menu.Close();
+                    ScheduleTrim();
+                }
+            });
+
+            QuitOnUnaskedClose(menu, () =>
+            {
+                if (!ReferenceEquals(_menu, menu))
+                {
+                    return false;
+                }
+
+                _menu = null;
+                return true;
+            });
+            _menu = menu;
+        }
+
+        _menu.ShowAtCursor();
+    }
+
+    // The Shortcut Sheet Flyout, Made On First Use And Released Once It Has Been Hidden A While
+    private ShortcutFlyoutWindow? Flyout()
+    {
+        if (_quitting)
+        {
+            return null;
+        }
+
+        if (_flyout is null)
+        {
+            var flyout = new ShortcutFlyoutWindow(_sheetModel);
+            flyout.CloseRequested    += (_, _) => flyout.HideFlyout();
+            flyout.SettingsRequested += (_, _) =>
+            {
+                flyout.HideFlyout();
+                OpenSettings();
+            };
+            flyout.EditRequested += (_, _) =>
+            {
+                flyout.HideFlyout();
+                _ = Windows.System.Launcher.LaunchUriAsync(_store.LoadEditorUrl());
+            };
+            flyout.Opened += (_, _) => RequestSheetRefresh();
+            flyout.Hidden += (_, _) => ScheduleTrim();
+            _flyout = flyout;
+        }
+
+        return _flyout;
+    }
+
+    // The Layer-Change HUD, Made On The First Change And Released Once It Has Been Hidden A While
+    private HudHost? Hud()
+    {
+        if (_quitting)
+        {
+            return null;
+        }
+
+        if (_hud is null)
+        {
+            var hud = new HudHost();
+            hud.Hidden += (_, _) => ScheduleTrim();
+            QuitOnUnaskedClose(hud, () =>
+            {
+                if (!ReferenceEquals(_hud, hud))
+                {
+                    return false;
+                }
+
+                _hud = null;
+                return true;
+            });
+            _hud = hud;
+        }
+
+        return _hud;
+    }
+
+    // taskkill And The Installer Send WM_CLOSE To The Front Window, Which Can Be The Menu Or HUD Host, So A Close We
+    // Didn't Ask For Quits. The App Forgets A Window Before Closing It, So forget() Then Returns False. The Handler
+    // Removes Itself, Since A Window Left Handling Its Own Closed Is Never Freed.
+    private void QuitOnUnaskedClose(Window window, Func<bool> forget)
+    {
+        void Window_Closed(object sender, WindowEventArgs args)
+        {
+            window.Closed -= Window_Closed;
+            if (forget())
+            {
+                _ = QuitAsync();
+            }
+        }
+
+        window.Closed += Window_Closed;
+    }
+
+    // Restarts The Wait, So A Burst Of Hides And Closes Ends In One Release And Trim
+    private void ScheduleTrim()
+    {
+        _trimTimer.Stop();
+        _trimTimer.Interval = IdleDelay;
+        _trimTimer.Start();
+    }
+
+    // Runs Before Each Trim: Closes The Flyout And HUD If They're Hidden, And Reports Whether Only The Tray Is Left
+    // (A Window Still On Screen Hides Later, And Its Hide Schedules The Next Try)
+    private bool ReleaseIdleWindows()
+    {
+        if (_quitting)
+        {
+            return false;
+        }
+
+        if (_flyout is { IsOpen: false } flyout && !flyout.AppWindow.IsVisible)
+        {
+            _flyout = null;
+            _refreshTimer?.Stop();
+            flyout.Shutdown();
+        }
+
+        if (_hud is { IsShown: false } hud)
+        {
+            _hud = null;
+            hud.Close();
+        }
+
+        return _flyout is null && _hud is null && _menu is null && SettingsWindow.Current is null;
     }
 
     private void OnDeviceConfig(DeviceConfig config)
@@ -194,7 +332,8 @@ public sealed partial class App : Application
         }
 
         // The HUD Rules Use New Settings From The Next Layer Change; The Hotkey Re-Registers On Each Change
-        SettingsWindow.Open(() =>
+        var isNew  = SettingsWindow.Current is null;
+        var window = SettingsWindow.Open(() =>
         {
             var model = new SettingsViewModel(_store, _startup)
             {
@@ -225,6 +364,12 @@ public sealed partial class App : Application
             };
             return model;
         });
+
+        // Settings Destroys Itself On Close, Then The Memory It Used Goes Back
+        if (isNew)
+        {
+            window.Closed += (_, _) => ScheduleTrim();
+        }
     }
 
     private void ApplyHotkey(SettingsViewModel model)
@@ -265,6 +410,7 @@ public sealed partial class App : Application
         finally
         {
             // Always Remove The Icon And Exit
+            _trimTimer?.Stop();
             _refreshTimer?.Stop();
             SettingsWindow.Current?.Close();
             _flyout?.Shutdown();

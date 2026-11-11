@@ -19,10 +19,11 @@
         </application>
     </compatibility>
 
-    <!-- Per-Monitor V2 DPI -->
+    <!-- Per-Monitor V2 DPI, And The Segment Heap, Which Hands Freed Native Memory Back To Windows Sooner -->
     <application xmlns="urn:schemas-microsoft-com:asm.v3">
         <windowsSettings>
             <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+            <heapType xmlns="http://schemas.microsoft.com/SMI/2020/WindowsSettings">SegmentHeap</heapType>
         </windowsSettings>
     </application>
 </assembly>

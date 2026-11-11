@@ -31,10 +31,18 @@ public sealed unsafe class TrayIcon : IDisposable
 {
     private const string WindowClass = "LayersMessageWindow";
     private const uint IconId        = 1;
+    private const nuint RetryTimerId = 1;
+
+    // Fixed Identity For The MSIX Build, So Windows Keeps The Icon's "Show On Taskbar" Choice Across Updates
+    // Its Install Path Has The Version In It, And Without A GUID Windows Treats Each Version As A New Icon, Hidden In
+    // The Overflow. The MSI Build Keeps One Path, And Dev Builds Run From Others, So Those Keep The Plain Window + ID
+    // (Windows Ties A GUID To The Path That First Used It). Never Change It: That Strands Every User's Choice Again
+    private static readonly Guid PackagedGuid = new("B3080742-07FC-49F2-B481-3F246990020F");
 
     private static TrayIcon? s_current;
 
     private readonly HWND _hwnd;
+    private readonly Guid? _guid;
     private readonly uint _taskbarCreated;
     private DestroyIconSafeHandle? _icon;
     private DeviceState _state = DeviceState.Initial;
@@ -47,9 +55,10 @@ public sealed unsafe class TrayIcon : IDisposable
     /// <remarks>
     /// Must run on the UI thread. Only one instance may exist.
     /// </remarks>
+    /// <param name="packaged">Whether this is the MSIX build, which picks the icon's fixed identity.</param>
     /// <exception cref="InvalidOperationException">A tray icon already exists.</exception>
     /// <exception cref="Win32Exception">The window couldn't be created.</exception>
-    public TrayIcon()
+    public TrayIcon(bool packaged)
     {
         if (s_current is not null)
         {
@@ -57,6 +66,7 @@ public sealed unsafe class TrayIcon : IDisposable
         }
 
         s_current = this;
+        _guid     = packaged ? PackagedGuid : null;
 
         // Register The Hidden Window Class
         var instance = PInvoke.GetModuleHandle((string?)null);
@@ -84,6 +94,13 @@ public sealed unsafe class TrayIcon : IDisposable
 
         // Explorer Restart Notification
         _taskbarCreated = PInvoke.RegisterWindowMessage("TaskbarCreated");
+
+        // A Copy That Crashed Or Was Killed Leaves Its Icon Under The Same GUID, And NIM_ADD Fails Until It's Gone
+        if (_guid is not null)
+        {
+            var stale = Identity();
+            PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_DELETE, in stale);
+        }
 
         Apply(NOTIFY_ICON_MESSAGE.NIM_ADD);
     }
@@ -113,7 +130,7 @@ public sealed unsafe class TrayIcon : IDisposable
     /// <returns>The icon's rectangle, or <see langword="null"/>.</returns>
     public RectInt32? GetIconRect()
     {
-        var id = new NOTIFYICONIDENTIFIER { cbSize = (uint)sizeof(NOTIFYICONIDENTIFIER), hWnd = _hwnd, uID = IconId };
+        var id = new NOTIFYICONIDENTIFIER { cbSize = (uint)sizeof(NOTIFYICONIDENTIFIER), hWnd = _hwnd, uID = IconId, guidItem = _guid ?? Guid.Empty };
         if (PInvoke.Shell_NotifyIconGetRect(in id, out var rect).Failed)
         {
             return null;
@@ -153,7 +170,7 @@ public sealed unsafe class TrayIcon : IDisposable
         _refreshing = true;
 
         // Remove The Icon
-        var data = new NOTIFYICONDATAW { cbSize = (uint)sizeof(NOTIFYICONDATAW), hWnd = _hwnd, uID = IconId };
+        var data = Identity();
         PInvoke.Shell_NotifyIcon(NOTIFY_ICON_MESSAGE.NIM_DELETE, in data);
 
         // Release Resources
@@ -182,15 +199,10 @@ public sealed unsafe class TrayIcon : IDisposable
             var icon = TrayIconRenderer.CreateIcon(TrayIconRenderer.RenderBgra(_state, TaskbarTheme.IsLight(), size), size);
 
             // Describe The Icon
-            var data = new NOTIFYICONDATAW
-            {
-                cbSize           = (uint)sizeof(NOTIFYICONDATAW),
-                hWnd             = _hwnd,
-                uID              = IconId,
-                uFlags           = NOTIFY_ICON_DATA_FLAGS.NIF_MESSAGE | NOTIFY_ICON_DATA_FLAGS.NIF_ICON | NOTIFY_ICON_DATA_FLAGS.NIF_TIP,
-                uCallbackMessage = TrayMessageRouter.TrayCallbackMessage,
-                hIcon            = (HICON)icon.DangerousGetHandle(),
-            };
+            var data = Identity();
+            data.uFlags          |= NOTIFY_ICON_DATA_FLAGS.NIF_MESSAGE | NOTIFY_ICON_DATA_FLAGS.NIF_ICON | NOTIFY_ICON_DATA_FLAGS.NIF_TIP;
+            data.uCallbackMessage = TrayMessageRouter.TrayCallbackMessage;
+            data.hIcon            = (HICON)icon.DangerousGetHandle();
             var tip = StatusText.Tooltip(_state);
             tip.AsSpan(0, Math.Min(tip.Length, 127)).CopyTo(data.szTip.AsSpan());
 
@@ -202,6 +214,18 @@ public sealed unsafe class TrayIcon : IDisposable
             }
 
             _added = ok || _added;
+
+            // The Shell Can Refuse Or Time Out While It's Still Starting At Sign-In, And Nothing Else Would Try
+            // Again, So Retry Every 2 Seconds Until It Takes
+            if (ok)
+            {
+                PInvoke.KillTimer(_hwnd, RetryTimerId);
+            }
+            else
+            {
+                Trace.TraceWarning("tray icon {0} failed, retrying", operation);
+                PInvoke.SetTimer(_hwnd, RetryTimerId, 2000, null);
+            }
 
             // Swap Icons
             _icon?.Dispose();
@@ -216,6 +240,16 @@ public sealed unsafe class TrayIcon : IDisposable
             _refreshing = false;
         }
     }
+
+    // The Window And ID, Plus The GUID When There Is One (Then The Shell Goes By The GUID)
+    private NOTIFYICONDATAW Identity() => new()
+    {
+        cbSize   = (uint)sizeof(NOTIFYICONDATAW),
+        hWnd     = _hwnd,
+        uID      = IconId,
+        guidItem = _guid ?? Guid.Empty,
+        uFlags   = _guid is null ? 0 : NOTIFY_ICON_DATA_FLAGS.NIF_GUID,
+    };
 
     private uint TaskbarDpi()
     {

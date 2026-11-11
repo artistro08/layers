@@ -59,6 +59,7 @@ public sealed class TrayMessageRouterTests
     [TestMethod]
     [DataRow(0x001Au)] // WM_SETTINGCHANGE
     [DataRow(0x02E0u)] // WM_DPICHANGED
+    [DataRow(0x0113u)] // WM_TIMER: retry after a failed add
     public void Route_SettingAndDpiChangesRefresh(uint message)
     {
         Assert.AreEqual(TrayAction.Refresh, TrayMessageRouter.Route(message, 0, TaskbarCreated));
